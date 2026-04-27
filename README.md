@@ -39,6 +39,8 @@ analyst initiate RBLX --verbose
 
 Output files use the convention `TICKER-slug-YYYYMMDD.md` (briefs) and `TICKER-initiation-YYYYMMDD.md` (reports).
 
+A real sample initiation report on Netflix is in [`examples/NFLX-initiation-20260427.md`](examples/NFLX-initiation-20260427.md). It is committed as-produced (with its real data gaps and limitations flagged in the Open Questions section) so readers can see what the tool actually outputs, not a polished demo.
+
 ## Sample brief structure
 
 ```
@@ -105,6 +107,7 @@ Without explicit phase rules the model interleaved gathering, computing, and wri
 analyst.py            # everything
 pyproject.toml        # dependencies, console script entry point
 .env.example          # template for API keys
+examples/             # committed sample outputs
 briefs/               # research output (gitignored)
 reports/              # initiation output (gitignored)
 ```
