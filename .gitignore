@@ -1,0 +1,12 @@
+.env
+briefs/
+reports/
+token_log/
+.claude/
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
