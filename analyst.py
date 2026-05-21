@@ -84,6 +84,8 @@ PHASE 1 — Gather all primary and peer data (use only edgar_search, edgar_fetch
 7. Find at least one independent third-party TAM estimate for the industry, in addition to whatever the company cites.
 8. Find the company's historical trading multiples — peak, trough, and current. If exact multiples aren't available, get stock prices at key dates (IPO, peak, recent trough) so you can approximate.
 9. Find upcoming catalysts over the next 6-12 months: next earnings date, investor day or conferences, product launches, regulatory deadlines, debt maturities, lockup expirations. Search "{{company name}} next earnings date 2026", "{{company name}} investor day 2026", and check the 10-K for any disclosed forward dates. Include consensus estimates for the next earnings period if you can find them — they'll be used to anchor catalyst thresholds.
+10. FISCAL CALENDAR CHECK. Record the fiscal year-end month for the subject company AND every peer. Companies that don't share the same fiscal year-end cannot be compared on "latest fiscal year" alone — their reported years cover different calendar periods. For any company whose latest reported fiscal year is stale relative to the others, OR whenever the subject's fiscal year doesn't align with the calendar year, gather the last 4 reported quarters of revenue (and EBITDA / FCF where available) so a trailing-twelve-month (LTM, a.k.a. TTM) figure can be built. For the subject company, capture BOTH (a) latest completed fiscal year (LFY) revenue and (b) LTM revenue (trailing 4 quarters as of the most recent reported quarter). Note where they materially differ.
+11. CYCLICAL-INDUSTRY DATA — gather this ONLY if the subject operates in an industry with well-documented boom-bust cycles (memory/commodity semiconductors, commodity chemicals, shipping, energy, mining, and the like). Skip this item entirely for companies where cyclicality is not the primary analytical lens (e.g. Netflix, Roblox). When it applies, gather: (a) historical cycle duration for this industry (how many quarters past upcycles and downcycles have lasted); (b) 3-4 leading indicators of a cycle turn for this specific industry (e.g. inventory days, spot-vs-contract price spread, fab/plant utilization, book-to-bill, freight day-rates, rig counts) — for each, the current reading AND the historical level that has signalled prior turns; and (c) the subject company's CapEx and depreciation & amortization for the latest fiscal year (plus a couple of prior years if readily available) to support a supply-side CapEx/Depreciation ratio.
 
 PHASE 1 BUDGET DISCIPLINE: Aim to finish gathering in under 55 tool calls. If you find yourself unable to locate a specific number after 2-3 search attempts, stop searching for it — note it as missing and move on. Missing data goes to Open Questions; it does not justify more searches.
 
@@ -110,6 +112,13 @@ For the subject company:
 For each peer:
 - EV/Revenue, EV/EBITDA, P/FCF (use "NM" for negative EBITDA or negative FCF)
 
+FISCAL BASIS RECONCILIATION (required — the comp table and snapshot depend on this):
+- Choose ONE revenue basis that can be applied consistently to EVERY company in the comp table. Use LTM/TTM when fiscal years are misaligned (the usual case); LFY is acceptable only when all companies share the same fiscal year-end. Compute each company's comp-table multiples (EV/Revenue, EV/EBITDA, P/FCF) from THAT single basis. Record which basis you chose — you must label it in the report.
+- The numerator period, the denominator period, and the printed multiple must all be the SAME period. NEVER pair a TTM/LTM multiple with a fiscal-year revenue figure, or vice versa.
+- For the subject company, compute LTM revenue and LFY revenue separately and the percentage difference between them. If they differ by more than 15%, set a flag — the report must show both and explain the divergence.
+- If the company has cyclical-industry data, compute the CapEx/Depreciation ratio (latest fiscal year CapEx / depreciation & amortization) as a supply-side indicator, plus the same ratio for any prior years gathered so the trend is visible. A ratio above ~1.5x historically signals capacity buildout that precedes oversupply.
+- VERIFY THE MATH before writing. For every row that will appear in the comp table, recompute EV / (revenue on the chosen basis) and assert it equals the EV/Revenue multiple you will print (within rounding). Print, per row: company, EV, revenue (basis-tagged), EV/revenue division result, and the multiple you will publish — side by side. If any row fails to reconcile, fix the inputs and recompute. Do not publish a multiple that doesn't reconcile to the EV and revenue shown in its own row.
+
 PHASE 2 STOP RULE: Once you have called python_repl, you are NOT permitted to call edgar_search, edgar_fetch, web_search, or fetch_url again. If a metric came out wrong because of bad input, fix the input in your next python_repl call — do not search the web. After at most 3 python_repl calls, proceed directly to Phase 3.
 
 ==============================================================
@@ -123,7 +132,7 @@ Output format:
 # [Ticker]: Initiation Report
 
 ## Trading Snapshot
-A single-row markdown table with columns: Price | Mkt Cap | 52W Range | Avg Daily Volume | Short Interest | EV/Rev (TTM) | EV/Rev (Fwd). Use the data pulled from Yahoo Finance in Phase 1 and the multiples computed in Phase 2. Format: price as $XX.XX, market cap as $X.XB, 52W range as $low – $high, avg daily volume as X.XM, short interest as X.X%, multiples as X.Xx. If forward EV/Rev is not available (no guidance), show "—". Add a single italicized line below: *Data as of [today's date].*
+A single-row markdown table with columns: Price | Mkt Cap | 52W Range | Avg Daily Volume | Short Interest | EV/Rev (trailing) | EV/Rev (Fwd). Use the data pulled from Yahoo Finance in Phase 1 and the multiples computed in Phase 2. The trailing EV/Rev column header MUST name the revenue basis it uses — write "EV/Rev (LTM)" or "EV/Rev (FY2025)", not a bare "EV/Rev". Use the SAME basis as the Peer Comp Table so the two cannot be conflated; if for any reason the snapshot uses a different basis than the comp table (e.g. snapshot LTM, comp table LFY), label each explicitly and add a one-line note flagging the difference. Format: price as $XX.XX, market cap as $X.XB, 52W range as $low – $high, avg daily volume as X.XM, short interest as X.X%, multiples as X.Xx. If forward EV/Rev is not available (no guidance), show "—". Add a single italicized line below: *Data as of [today's date].*
 
 ## Business Overview
 What the company does, revenue model, segment breakdown, key operating metrics management tracks. Cite the 10-K Item 1.
@@ -175,6 +184,11 @@ Subject company's current market cap, EV, and the multiples you computed. Show t
 ### Peer Comp Table
 One-sentence rationale for peer selection, then a markdown table with the subject company in row 1 and 4-6 peers below. Columns: Company | EV ($B) | Rev ($B) | Rev Growth | EV/Rev | EV/EBITDA | P/FCF. Use "NM" for non-meaningful values (negative EBITDA, negative FCF). Add a one-line note below the table positioning the subject company vs peers (premium or discount, and why).
 
+Single-basis rules (non-negotiable — these come straight from Phase 2):
+- Every company in the table must use the SAME revenue basis (the one chosen in Phase 2). Label it in the Rev column header: "Rev (LTM, $B)" or "Rev (FY2025, $B)". A bare "Rev ($B)" is not acceptable when fiscal years are misaligned.
+- The multiples must be computed from the SAME revenue basis shown in the table. If the Rev column is FY2025 revenue, EV/Rev must equal EV ÷ FY2025 revenue. Quote the verified numbers from Phase 2 — do not mix a trailing multiple with a fiscal-year revenue figure.
+- When the subject company's LTM revenue differs from its LFY revenue by more than 15% (the flag set in Phase 2), add a row or a footnote immediately below the table showing BOTH figures and a one-line reason for the divergence — e.g. "LTM revenue of $58B vs FY2025 revenue of $37.4B reflects explosive QoQ growth in Q1-Q2 FY2026."
+
 ### Forward Context
 If the company has issued forward guidance or pre-announced numbers (next quarter or full year), compute approximate forward multiples using the guidance midpoint via python_repl. Show the inputs (guided revenue, guided EBITDA if given, current EV) and the resulting forward EV/Revenue, EV/EBITDA, etc. Add one sentence noting how the forward multiple compares to trailing — analysts shouldn't be working off stale numbers when newer ones are available. If no forward guidance exists, write "No forward guidance issued; trailing multiples shown above are the latest available." and skip the table.
 
@@ -201,6 +215,15 @@ Hard rules:
 - Never output a specific dollar price target. Express direction as a percentage range derived from multiple re-rating scenarios.
 - Present bull and bear with equal analytical rigor. Do not signal which side you favor.
 - Every claim must reference data already in the report. Do not introduce new unsourced assertions in this section.
+- For companies in cyclical industries (those that get a Cycle Positioning subsection below), the cycle framework must inform these cases: the bear case must include a cycle-turn / downcycle scenario, and the bull case must explicitly address why "this time might be different" — with appropriate skepticism, since it usually isn't.
+
+### Cycle Positioning
+Include this subsection ONLY when the company operates in an industry with well-documented boom-bust cycles (memory/commodity semiconductors, commodity chemicals, shipping, energy, mining, and the like). OMIT it entirely for companies where cyclicality is not the primary analytical lens — e.g. Netflix, Roblox — and do not leave an empty heading. When it applies, place it here, immediately after Bull / Bear / Base Cases. Include:
+
+- **Cycle position:** State where the company appears to be in its industry cycle — early, mid, or late upcycle or downcycle — with the evidence that places it there.
+- **Historical cycle duration:** Cite how long past cycles have run for context (e.g. "DRAM upcycles have historically lasted 6-8 quarters"), so the reader can judge how much runway may remain.
+- **Leading indicators:** A markdown table of the 3-4 leading indicators of a cycle turn gathered in Phase 1. Columns: Indicator | Current Reading | Historical Trigger Level | Read. Anchor the trigger levels to the historical data, and the Read to whether the current reading is approaching, at, or past that trigger.
+- **Supply-side check:** Report the CapEx/Depreciation ratio computed in Phase 2 and interpret it — a ratio above ~1.5x historically signals capacity buildout that precedes oversupply. Show the trend if prior-year ratios were computed.
 
 ### Key Debates
 Identify 2-3 genuine analytical disagreements where reasonable investors could take opposite sides. Do NOT manufacture debates. If only two genuine debates exist, write two; if only one, write one. Never pad to fill space.
