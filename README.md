@@ -69,7 +69,8 @@ Numbered list of sources, each with a URL.
 ## Competitive Landscape     (per-competitor table with entity-bound metrics)
 ## Valuation Context         (peer comp table, forward multiples, history)
 ## Key Risks                 (10-K Item 1A + emerging risks)
-## Investment Framework      (bull/bear/base, key debates, catalyst calendar)
+## Investment Framework      (bull/bear/base, cycle positioning*, key debates, catalyst calendar)
+                            (* cycle positioning only for cyclical industries)
 ## Open Questions            (gaps for the analyst to verify manually)
 ## Sources                   (numbered, every entry has a URL)
 ```
