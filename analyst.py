@@ -11,6 +11,16 @@ from pathlib import Path
 from openai import OpenAI
 from tavily import TavilyClient
 
+# Windows consoles default to a legacy locale codec (cp1252, or GBK on Chinese
+# systems) which crashes on non-ASCII model output like ®, —, or smart quotes,
+# especially when stdout is piped (non-tty falls back to the locale encoding).
+# Force UTF-8 so streaming never aborts the run before the report is saved.
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
 BRIEFS_DIR = Path("briefs")
@@ -118,6 +128,7 @@ FISCAL BASIS RECONCILIATION (required — the comp table and snapshot depend on 
 - For the subject company, compute LTM revenue and LFY revenue separately and the percentage difference between them. If they differ by more than 15%, set a flag — the report must show both and explain the divergence.
 - If the company has cyclical-industry data, compute the CapEx/Depreciation ratio (latest fiscal year CapEx / depreciation & amortization) as a supply-side indicator, plus the same ratio for any prior years gathered so the trend is visible. A ratio above ~1.5x historically signals capacity buildout that precedes oversupply.
 - VERIFY THE MATH before writing. For every row that will appear in the comp table, recompute EV / (revenue on the chosen basis) and assert it equals the EV/Revenue multiple you will print (within rounding). Print, per row: company, EV, revenue (basis-tagged), EV/revenue division result, and the multiple you will publish — side by side. If any row fails to reconcile, fix the inputs and recompute. Do not publish a multiple that doesn't reconcile to the EV and revenue shown in its own row.
+- SANITY-CHECK every computed figure, forward/guidance-based figures included. EBITDA can never exceed revenue, and gross profit (revenue x gross margin) caps EBITDA — if any EBITDA you computed is larger than its own revenue base, the inputs are wrong; recompute before writing. Apply the same reconciliation you used for the comp table to the forward block: forward EV/Revenue must equal current EV / forward revenue, and forward EV/EBITDA must equal current EV / forward EBITDA. Do not print a forward multiple that does not reconcile to the EV and the forward figure shown alongside it.
 
 PHASE 2 STOP RULE: Once you have called python_repl, you are NOT permitted to call edgar_search, edgar_fetch, web_search, or fetch_url again. If a metric came out wrong because of bad input, fix the input in your next python_repl call — do not search the web. After at most 3 python_repl calls, proceed directly to Phase 3.
 
@@ -190,7 +201,7 @@ Single-basis rules (non-negotiable — these come straight from Phase 2):
 - When the subject company's LTM revenue differs from its LFY revenue by more than 15% (the flag set in Phase 2), add a row or a footnote immediately below the table showing BOTH figures and a one-line reason for the divergence — e.g. "LTM revenue of $58B vs FY2025 revenue of $37.4B reflects explosive QoQ growth in Q1-Q2 FY2026."
 
 ### Forward Context
-If the company has issued forward guidance or pre-announced numbers (next quarter or full year), compute approximate forward multiples using the guidance midpoint via python_repl. Show the inputs (guided revenue, guided EBITDA if given, current EV) and the resulting forward EV/Revenue, EV/EBITDA, etc. Add one sentence noting how the forward multiple compares to trailing — analysts shouldn't be working off stale numbers when newer ones are available. If no forward guidance exists, write "No forward guidance issued; trailing multiples shown above are the latest available." and skip the table.
+If the company has issued forward guidance or pre-announced numbers (next quarter or full year), compute approximate forward multiples using the guidance midpoint via python_repl. Show the inputs (guided revenue, guided EBITDA if given, current EV) and the resulting forward EV/Revenue, EV/EBITDA, etc. The forward EBITDA you show MUST be less than forward revenue (and below implied forward gross profit) — an EBITDA above the revenue it is drawn from is impossible and means the input is wrong; recompute in python_repl before writing. Forward EV/EBITDA must equal current EV / forward EBITDA and forward EV/Revenue must equal current EV / forward revenue; both must reconcile to the figures you print. Add one sentence noting how the forward multiple compares to trailing — analysts shouldn't be working off stale numbers when newer ones are available. If no forward guidance exists, write "No forward guidance issued; trailing multiples shown above are the latest available." and skip the table.
 
 ### Historical Context
 Concrete data points on where the current multiple sits versus history. Cite peak multiple and date, trough multiple and date, and current multiple. If exact multiples are unavailable, approximate from stock prices at those dates and contemporaneous revenue figures, and flag the approximation.
@@ -749,10 +760,25 @@ def _slug(text: str, max_keywords: int = 3) -> str:
     return "-".join(keywords) if keywords else "brief"
 
 
+def _strip_preamble(content: str) -> str:
+    """Kimi occasionally leaks a sentence of tool-use narration ("Now I have gathered
+    sufficient data...", "I'll begin Phase 1...") above the report's "# Title", despite
+    the prompt forbidding it. Both report formats are guaranteed to open with a markdown
+    heading, so drop everything before the first heading marker. The search is NOT anchored
+    to line-start on purpose: the leak often runs straight into the title with no newline
+    ("...SEC filings.# MU: Initiation Report"), which both hides the leak and breaks the
+    title's rendering. Cutting from the "#" preserves the title and re-floats it to the
+    start of the file. If no heading exists (a rare degenerate output), leave the content
+    untouched rather than risk emptying the file."""
+    match = re.search(r"#{1,6}\s", content)
+    return content[match.start():] if match else content
+
+
 def _save(directory: Path, ticker: str, slug: str, frontmatter: dict, content: str) -> Path:
     directory.mkdir(exist_ok=True)
     today = datetime.date.today()
     date_str = today.strftime("%Y%m%d")
+    content = _strip_preamble(content)
     fm_lines = ["---"] + [f"{k}: {v}" for k, v in frontmatter.items()] + ["---", ""]
     header = "\n".join(fm_lines) + "\n"
     filename = directory / f"{ticker.upper()}-{slug}-{date_str}.md"
