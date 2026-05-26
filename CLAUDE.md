@@ -2,10 +2,11 @@
 
 ## What this is
 
-A single-file Python CLI (`analyst.py`) that produces sourced markdown research on public equities. Two commands:
+A single-file Python CLI (`analyst.py`) that produces sourced markdown research on public equities. Three commands:
 
 - **`analyst research TICKER "QUESTION"`** — focused brief on a specific question. Output → `briefs/`.
 - **`analyst initiate TICKER`** — deep-dive initiation report (10-K parsing, peer comps, valuation, investment framework). Output → `reports/`.
+- **`analyst translate PATH [--lang zh]`** — translate a finished report into another language; the English original is kept. See **Localization** below.
 
 Public repo: https://github.com/Yogurto710/le-analyst
 
@@ -28,6 +29,18 @@ The whole tool runs an **agentic tool-use loop** against Kimi K2.6 via the OpenA
 3. **Synthesize** (Phase 3): write the report. No tool calls.
 
 Total `initiate` tool budget: 85.
+
+## Localization (`analyst translate`)
+
+`analyst translate PATH [--lang zh]` writes a translated sibling of a finished report (e.g. `reports/MU-initiation-20260525.zh.md`); `initiate`/`research` also take a `--translate zh` flag to do it right after saving. Design decisions, don't undo without understanding:
+
+- **English stays canonical.** Sources for US-listed names are English, so the English report is the source of truth and translation is a separate, re-runnable pass over the finished markdown — NOT a second generation. Don't move analysis into the translation step.
+- **Reuses Kimi.** Translation is the same `kimi-k2.6` (a Chinese-native model) via one non-agentic streaming call (no tools), `thinking` disabled, with one retry on the usual `api.moonshot.cn` mid-stream drops. No new provider or dependency.
+- **Preserve-exactly rules live in `TRANSLATE_SYSTEM_PROMPT_TEMPLATE`.** Numbers/units pass through verbatim; `$` is never converted to ¥/RMB; source URLs stay byte-identical; tables/headings/section order preserved; tickers stay Latin; a financial-term glossary keeps terminology consistent.
+- **The Investment Framework discipline is re-stated in the translation prompt** — the model must not introduce 买入/卖出/持有 or a price target, because Chinese makes those phrasings very natural.
+- **Frontmatter preserved verbatim** with a `lang:` line added; only the body is translated (`_split_frontmatter` / `_frontmatter_with_lang`).
+- **`_verify_translation` is a guardrail, not a gate.** It warns (stderr) if the URL set, table-row count, or heading count drifts from the English — catching dropped sources or mangled tables — but never blocks the save.
+- Only `zh` has a tuned glossary today; other codes fall back to a generic prompt with a heads-up. Cost ~$0.05-0.15 per report.
 
 ## Critical conventions that aren't obvious from the code
 
@@ -56,6 +69,7 @@ These are the rules and design decisions accumulated over several rounds of iter
 - Briefs saved as `briefs/TICKER-slug-YYYYMMDD.md` with YAML frontmatter (ticker, question, date, model).
 - Initiations saved as `reports/TICKER-initiation-YYYYMMDD.md` with YAML frontmatter.
 - Slug = question with stopwords stripped, first 3 meaningful tokens. The stopword filler list includes "roblox" (legacy from RBLX testing — leave it).
+- Translations are saved beside the original as `…-YYYYMMDD.<lang>.md` (e.g. `.zh.md`), with the English frontmatter preserved plus a `lang:` line; only the body is translated.
 
 ### Initiation report sections (in order)
 
@@ -128,5 +142,5 @@ These have been considered and shelved — don't suggest them unprompted:
 
 ## When in doubt
 
-- Read `analyst.py` top to bottom — it's ~900 lines but linearly organized: constants → tool implementations → agent loop → commands.
+- Read `analyst.py` top to bottom — it's ~1,000 lines but linearly organized: constants → tool implementations → agent loop → output saving → translation → commands.
 - The system prompt templates (`RESEARCH_SYSTEM_PROMPT_TEMPLATE` and `INITIATE_SYSTEM_PROMPT_TEMPLATE`) at the top of the file encode most of the report structure and rules. If a behavior issue is in the output, it's almost certainly fixable in those templates.

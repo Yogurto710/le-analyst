@@ -1,9 +1,10 @@
 # Le Analyst
 
-A command-line research assistant for public equities. Two commands:
+A command-line research assistant for public equities. Three commands:
 
 - `analyst research TICKER "QUESTION"` — produces a sourced, dated brief on a specific question.
 - `analyst initiate TICKER` — produces a deep-dive initiation report with peer comps, valuation, risks, and an investment framework.
+- `analyst translate PATH` — translates an existing English report into another language (Chinese today), saving a sibling file and leaving the English original as the source of truth.
 
 Output is saved as Markdown to `briefs/` (research) and `reports/` (initiation).
 
@@ -35,9 +36,15 @@ analyst initiate RBLX
 
 # Show each tool call as it happens
 analyst initiate RBLX --verbose
+
+# Generate and localize in one step (English original is still saved)
+analyst initiate RBLX --translate zh
+
+# Or translate an existing report on its own
+analyst translate reports/RBLX-initiation-20260426.md --lang zh
 ```
 
-Output files use the convention `TICKER-slug-YYYYMMDD.md` (briefs) and `TICKER-initiation-YYYYMMDD.md` (reports).
+Output files use the convention `TICKER-slug-YYYYMMDD.md` (briefs) and `TICKER-initiation-YYYYMMDD.md` (reports). Translations are saved alongside the original with a language suffix, e.g. `TICKER-initiation-YYYYMMDD.zh.md`.
 
 A real sample initiation report on Netflix is in [`examples/NFLX-initiation-20260427.md`](examples/NFLX-initiation-20260427.md). It is committed as-produced (with its real data gaps and limitations flagged in the Open Questions section) so readers can see what the tool actually outputs, not a polished demo.
 
@@ -82,6 +89,8 @@ A few choices that shaped how the tool works:
 **Single-file Python.** `analyst.py` holds the whole thing — Typer commands, prompt templates, tool implementations, and the agent loop. Refactor when something hurts.
 
 **Kimi K2.6 over Claude/GPT.** The OpenAI-compatible endpoint at `api.moonshot.cn` plus aggressive prompt-cache pricing (~96% cache hit rate on a typical run, cached input at ~17% of uncached) makes long agentic loops cheap. A full initiation report runs ~$0.75 USD.
+
+**Localization is post-hoc and additive.** `analyst translate` (and the `--translate` flag) run the finished English report back through Kimi — itself a Chinese-native model, so no new dependency — as a single non-agentic pass, saving a `.zh.md` sibling and keeping the English version canonical (sources for US-listed names are English). The translation prompt preserves numbers, `$` (never converted to ¥), source URLs byte-for-byte, and table structure, and re-states the no-rating / no-price-target discipline so it survives into Chinese. A verification step warns on any URL/table/heading drift from the original.
 
 **Three-phase initiation flow.** The `initiate` command enforces strict phase boundaries via the system prompt:
 1. **Gather** — `edgar_search`, `edgar_fetch`, `web_search`, `fetch_url` to pull 10-K sections, transcripts, peer financials, TAM, historical multiples, and catalysts.

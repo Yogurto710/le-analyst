@@ -789,20 +789,149 @@ def _save(directory: Path, ticker: str, slug: str, frontmatter: dict, content: s
 
 # ---------- Setup helper ----------
 
-def _setup_clients() -> tuple[OpenAI, TavilyClient]:
+def _moonshot_client() -> OpenAI:
     load_dotenv()
     moonshot_key = os.environ.get("MOONSHOT_API_KEY")
-    tavily_key = os.environ.get("TAVILY_API_KEY")
     if not moonshot_key:
         typer.echo("MOONSHOT_API_KEY not set (add it to .env)", err=True)
         raise typer.Exit(1)
+    return OpenAI(api_key=moonshot_key, base_url=BASE_URL)
+
+
+def _setup_clients() -> tuple[OpenAI, TavilyClient]:
+    client = _moonshot_client()
+    tavily_key = os.environ.get("TAVILY_API_KEY")
     if not tavily_key:
         typer.echo("TAVILY_API_KEY not set (add it to .env)", err=True)
         raise typer.Exit(1)
-    return (
-        OpenAI(api_key=moonshot_key, base_url=BASE_URL),
-        TavilyClient(api_key=tavily_key),
-    )
+    return client, TavilyClient(api_key=tavily_key)
+
+
+# ---------- Translation ----------
+#
+# Localization is post-hoc and additive: the English report stays the canonical
+# artifact (sources for US-listed names are English), and translation is a separate,
+# re-runnable pass over the finished markdown. The translation model is Kimi itself —
+# a Chinese-native model — so no new provider is needed.
+
+TRANSLATE_LANG_NAMES = {"zh": "Simplified Chinese (简体中文)"}
+
+TRANSLATE_SYSTEM_PROMPT_TEMPLATE = """You are a professional financial translator. Translate the equity-research report below from English into {language}. It will be read by {language} investors analyzing US-listed (NYSE / NASDAQ) equities.
+
+Output ONLY the translated Markdown — no preamble, no explanation, no code fences. Start directly with the first heading.
+
+PRESERVE EXACTLY — do not alter, reformat, or translate any of these:
+- Numbers, dates, and units: $, %, x (as in 14.5x), B / M / bn / mn, basis points, ratios. NEVER convert currency — US dollars stay US dollars ($); do not restate as RMB / ¥.
+- Every source URL, character for character. You may translate the title/publication text on a source line, but the URL itself must be byte-identical.
+- Ticker symbols (e.g. RBLX, MU, NTES) — keep them in Latin letters.
+- Markdown structure: keep every heading and its level, every table (same columns, same number of rows, same pipes and alignment), every list, and the section order identical to the source.
+- YAML frontmatter is handled separately — it is NOT included below, so translate only the body.
+
+TERMINOLOGY — use standard {language} financial terms, applied consistently throughout:
+- Keep these acronyms as-is (optionally add the {language} term in parentheses on first use only): EBITDA, FCF, DCF, EV, TAM, GAAP, SBC, CAGR, YoY, QoQ, LTM, TTM, DAU, MAU, ARPU, ROE, ROIC.
+- free cash flow → 自由现金流; enterprise value → 企业价值; bookings → 预订量（流水）; deferred revenue → 递延收入; gross margin → 毛利率; operating margin → 营业利润率; net cash → 净现金; dilution → 摊薄; guidance → 业绩指引; consensus → 市场一致预期; re-rating → 估值重估.
+- Company names: use the established {language} name where one exists (e.g. NetEase → 网易, Micron → 美光); otherwise keep the English name.
+
+DISCIPLINE — this report deliberately follows these rules, and your translation must preserve them:
+- Never introduce a buy / sell / hold recommendation (买入 / 卖出 / 持有) or any directional rating, even where it would read naturally. The English contains none; neither should the translation.
+- Never introduce a specific price target. Keep valuation framed exactly as the English does — percentage ranges and scenarios.
+- Translate faithfully and completely. Do not add, drop, soften, or sharpen any claim, and do not summarize.
+"""
+
+
+def _translate_text(client: OpenAI, content: str, lang: str) -> str:
+    """Single-shot translation of finished report markdown. No tools; one retry on the
+    mid-stream connection drops that occasionally hit api.moonshot.cn."""
+    language = TRANSLATE_LANG_NAMES.get(lang, lang)
+    system_prompt = TRANSLATE_SYSTEM_PROMPT_TEMPLATE.format(language=language)
+    last_err = None
+    for _attempt in range(2):
+        parts: list[str] = []
+        try:
+            stream = client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": content},
+                ],
+                stream=True,
+                extra_body={"thinking": {"type": "disabled"}},
+            )
+            for chunk in stream:
+                if not chunk.choices:
+                    continue
+                delta = chunk.choices[0].delta
+                if delta.content:
+                    sys.stdout.write(delta.content)
+                    sys.stdout.flush()
+                    parts.append(delta.content)
+            return "".join(parts)
+        except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ReadTimeout) as e:
+            last_err = e
+            typer.echo(f"\n[connection dropped, retrying translation] {e}", err=True)
+    raise last_err
+
+
+def _split_frontmatter(text: str) -> tuple[str, str]:
+    """Return (frontmatter_block, body). The block keeps its --- fences and trailing
+    newline; '' if the file has no frontmatter."""
+    m = re.match(r"(---\n.*?\n---\n)(.*)", text, re.DOTALL)
+    return (m.group(1), m.group(2)) if m else ("", text)
+
+
+def _frontmatter_with_lang(fm_block: str, lang: str) -> str:
+    """Re-emit the frontmatter verbatim with a `lang:` line added before the closing ---."""
+    if not fm_block or re.search(r"^lang:", fm_block, re.MULTILINE):
+        return fm_block
+    lines = fm_block.rstrip("\n").split("\n")  # [..., 'k: v', '---']
+    lines.insert(len(lines) - 1, f"lang: {lang}")
+    return "\n".join(lines) + "\n"
+
+
+def _verify_translation(english: str, translated: str) -> list[str]:
+    """Cheap structural checks for the classic translation failures: a dropped source,
+    a mangled table, a lost section. Warnings only — never blocks the save."""
+    warnings: list[str] = []
+    url_re = r"https?://[^\s)\]]+"
+    en_urls, zh_urls = re.findall(url_re, english), re.findall(url_re, translated)
+    if len(en_urls) != len(zh_urls):
+        warnings.append(f"source URL count differs: English {len(en_urls)} vs translated {len(zh_urls)}")
+    missing = set(en_urls) - set(zh_urls)
+    if missing:
+        warnings.append(f"{len(missing)} source URL(s) missing from translation, e.g. {sorted(missing)[0]}")
+
+    def rows(t: str) -> int:
+        return sum(1 for ln in t.splitlines() if ln.lstrip().startswith("|"))
+
+    def heads(t: str) -> int:
+        return sum(1 for ln in t.splitlines() if re.match(r"#{1,6}\s", ln))
+
+    if rows(english) != rows(translated):
+        warnings.append(f"table row count differs: English {rows(english)} vs translated {rows(translated)}")
+    if heads(english) != heads(translated):
+        warnings.append(f"heading count differs: English {heads(english)} vs translated {heads(translated)}")
+    return warnings
+
+
+def _translate_file(client: OpenAI, path: Path, lang: str) -> Path:
+    """Translate an existing English report, writing a sibling `<name>.<lang>.md`."""
+    if path.name.endswith(f".{lang}.md"):
+        typer.echo(f"{path.name} is already a .{lang}.md file; skipping.", err=True)
+        return path
+    text = path.read_text(encoding="utf-8")
+    fm_block, body = _split_frontmatter(text)
+    typer.echo(f"\nTranslating {path.name} -> {lang} ...\n", err=True)
+    zh_body = _strip_preamble(_translate_text(client, body, lang))
+    for w in _verify_translation(body, zh_body):
+        typer.echo(f"  [translation check] {w}", err=True)
+    out_text = _frontmatter_with_lang(fm_block, lang)
+    out_text += ("\n" if fm_block else "") + zh_body.lstrip("\n")
+    if not out_text.endswith("\n"):
+        out_text += "\n"
+    out_path = path.with_suffix(f".{lang}.md")
+    out_path.write_text(out_text, encoding="utf-8")
+    typer.echo(f"\nSaved: {out_path}", err=True)
+    return out_path
 
 
 # ---------- Commands ----------
@@ -812,6 +941,7 @@ def research(
     ticker: str = typer.Argument(..., help="Stock ticker, e.g. RBLX"),
     question: str = typer.Argument(..., help="Research question in quotes"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print each tool call"),
+    translate: str = typer.Option(None, "--translate", help="Also save a translated copy, e.g. 'zh'"),
 ):
     """Research a public company and produce a sourced brief."""
     client, tavily = _setup_clients()
@@ -827,7 +957,7 @@ def research(
         client, tavily, messages, RESEARCH_TOOLS, RESEARCH_MAX_TOOL_CALLS, verbose
     )
 
-    _save(
+    saved = _save(
         BRIEFS_DIR,
         ticker,
         _slug(question),
@@ -839,12 +969,15 @@ def research(
         },
         output,
     )
+    if translate:
+        _translate_file(client, saved, translate)
 
 
 @app.command()
 def initiate(
     ticker: str = typer.Argument(..., help="Stock ticker, e.g. RBLX"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print each tool call"),
+    translate: str = typer.Option(None, "--translate", help="Also save a translated copy, e.g. 'zh'"),
 ):
     """Produce a deep-dive initiation report on a public company."""
     client, tavily = _setup_clients()
@@ -860,7 +993,7 @@ def initiate(
         client, tavily, messages, INITIATE_TOOLS, INITIATE_MAX_TOOL_CALLS, verbose
     )
 
-    _save(
+    saved = _save(
         REPORTS_DIR,
         ticker,
         "initiation",
@@ -872,6 +1005,24 @@ def initiate(
         },
         output,
     )
+    if translate:
+        _translate_file(client, saved, translate)
+
+
+@app.command()
+def translate(
+    path: str = typer.Argument(..., help="Path to an existing English report (.md)"),
+    lang: str = typer.Option("zh", "--lang", "-l", help="Target language code (currently: zh)"),
+):
+    """Translate an existing report into another language; keeps the English original."""
+    report = Path(path)
+    if not report.is_file():
+        typer.echo(f"File not found: {report}", err=True)
+        raise typer.Exit(1)
+    if lang not in TRANSLATE_LANG_NAMES:
+        typer.echo(f"Language '{lang}' has no tuned glossary; supported: {', '.join(TRANSLATE_LANG_NAMES)}", err=True)
+    client = _moonshot_client()
+    _translate_file(client, report, lang)
 
 
 if __name__ == "__main__":
