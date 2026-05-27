@@ -68,13 +68,13 @@ Numbered list of sources, each with a URL.
 ```
 # NFLX: Initiation Report
 
-## Trading Snapshot          (price, mkt cap, 52W range, volume, short %, EV/Rev)
+## Trading Snapshot          (price, mkt cap, 52W range, volume, short %, EV/Rev, EPS, P/E)
 ## Business Overview         (anchored in 10-K Item 1)
-## Financial Profile         (YoY summary, balance sheet, key ratios, QoE notes)
+## Financial Profile         (financial summary: trailing + LTM + FY+1/FY+2 consensus, balance sheet, key ratios, QoE notes)
 ## Management Commentary     (last 2 earnings calls, guidance)
 ## Market Opportunity        (company TAM vs. independent TAM, implied share)
 ## Competitive Landscape     (per-competitor table with entity-bound metrics)
-## Valuation Context         (peer comp table, forward multiples, history)
+## Valuation Context         (leads with forward P/E or EV/Rev on consensus; peer comp, forward context, history)
 ## Key Risks                 (10-K Item 1A + emerging risks)
 ## Investment Framework      (bull/bear/base, cycle positioning*, key debates, catalyst calendar)
                             (* cycle positioning only for cyclical industries)

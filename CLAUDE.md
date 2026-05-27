@@ -24,11 +24,11 @@ The whole tool runs an **agentic tool-use loop** against Kimi K2.6 via the OpenA
 **`research` command** is a simple loop: gather → write brief. Tool budget 30.
 
 **`initiate` command** enforces three sequential phases via the system prompt:
-1. **Gather** (Phase 1): SEC filings, transcripts, Yahoo key-stats, per-peer financials, TAM, historical multiples, catalysts. Aim under 55 calls.
+1. **Gather** (Phase 1): SEC filings, transcripts, Yahoo key-stats, per-peer financials, TAM, historical multiples, catalysts, Wall Street consensus (revenue + EPS). Aim under 60 calls.
 2. **Compute** (Phase 2): `python_repl` for every derived metric and peer multiple. Hard cap of 3 calls. **Once Phase 2 begins, no more searches allowed.**
 3. **Synthesize** (Phase 3): write the report. No tool calls.
 
-Total `initiate` tool budget: 85.
+Total `initiate` tool budget: 90 (raised from 85 to fund consensus-estimate searches).
 
 ## Localization (`analyst translate`)
 
@@ -73,13 +73,13 @@ These are the rules and design decisions accumulated over several rounds of iter
 
 ### Initiation report sections (in order)
 
-1. Trading Snapshot (Price, Mkt Cap, 52W Range, Avg Daily Volume, Short Interest, EV/Rev TTM, EV/Rev Fwd)
+1. Trading Snapshot (Price, Mkt Cap, 52W Range, Avg Daily Volume, Short Interest, EV/Rev, EV/Rev Fwd, EPS LTM, EPS Fwd, P/E LTM, P/E Fwd)
 2. Business Overview
-3. Financial Profile (YoY Summary, Balance Sheet Snapshot, Key Ratios, Quality-of-Earnings Notes)
+3. Financial Profile (Financial Summary [prior FY / LFY / LTM / FY+1E / FY+2E, consensus forward cols], Balance Sheet Snapshot, Key Ratios, Quality-of-Earnings Notes)
 4. Management Commentary
 5. Market Opportunity (company TAM + independent TAM + implied share + methodology caveat)
 6. Competitive Landscape (Stated Position + Independent Evidence table)
-7. Valuation Context (Peer Comp Table, Forward Context, Historical Context)
+7. Valuation Context (opens with the primary forward valuation lens — forward P/E if comfortably profitable, else forward EV/Rev, both FY+1 and FY+2 on consensus — then Peer Comp Table, Forward Context, Historical Context)
 8. Key Risks
 9. Investment Framework (Bull/Bear/Base + Key Debates + Catalyst Calendar)
 10. Open Questions
@@ -92,6 +92,8 @@ These are the rules and design decisions accumulated over several rounds of iter
 - Bull and bear cases must have equal analytical rigor; don't signal which side you favor.
 - Key Debates section must use real debates only — never manufacture to fill space.
 - Catalyst Calendar thresholds must be numeric where possible, anchored to consensus or guidance midpoint.
+- Forward estimates (revenue, EPS, EBITDA) come from Wall Street consensus gathered in Phase 1 — cite source, analyst count, and date, and frame as "the Street expects…", never as the tool's own forecast. P/E on negative EPS is "NM".
+- The narrative is centered on the company's CURRENT (forward) valuation: forward P/E if comfortably profitable, otherwise forward EV/Revenue (or EV/EBITDA) — both on consensus, shown for FY+1 and FY+2. Valuation Context opens with this lens, the Trading Snapshot carries it, and the Investment Framework re-rates around it. Trailing/LTM and forward figures are kept front-and-center (Financial Summary and Valuation Context both span trailing → LTM → FY+1 → FY+2).
 
 ### Quality-of-Earnings Notes triggers
 
@@ -108,7 +110,7 @@ Do NOT narrate every metric. Only flag divergences.
 - **Kimi can leak instruction phrases** ("Now I have gathered sufficient data...") above the title despite the prompt explicitly forbidding it. The fix has been mostly prompt-side; if it recurs, consider stripping any pre-`#` content before saving.
 - **API connection drops mid-stream** happen occasionally on `api.moonshot.cn`. The `agentic_loop` in `analyst.py` catches `httpx.ReadError`, `RemoteProtocolError`, and `ReadTimeout`. If the model already signalled `stop` and output was streamed before the drop, treat as success.
 - **Windows `cp1252` encoding crashes on non-ASCII output.** Fixed at the top of `analyst.py` with `sys.stdout.reconfigure(encoding="utf-8", errors="replace")`. Don't remove it.
-- **Watch for hallucinated headline numbers** when the model is reading an unverified third-party transcript. If a YoY growth number exceeds 100% or a margin exceeds 70%, the model has historically treated extreme outliers as canonical without flagging — worth a sanity check before committing to a sample.
+- **Watch for hallucinated headline numbers** when the model is reading an unverified third-party transcript. If a YoY growth number exceeds 100% or a margin exceeds 70%, the model has historically treated extreme outliers as canonical without flagging — worth a sanity check before committing to a sample. Phase 2 now enforces forward-estimate sanity checks (EBITDA ≤ gross profit; gross ≥ EBITDA ≥ operating ≥ net margin ordering; annualized-vs-consensus divergence > 20%), which catches the impossible-margin class — e.g. an early Micron run produced a ~$105B EBITDA on ~$95B revenue (110% margin).
 
 ## Cost ballpark
 
