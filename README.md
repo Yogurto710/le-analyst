@@ -46,7 +46,7 @@ analyst translate reports/RBLX-initiation-20260426.md --lang zh
 
 Output files use the convention `TICKER-slug-YYYYMMDD.md` (briefs) and `TICKER-initiation-YYYYMMDD.md` (reports). Translations are saved alongside the original with a language suffix, e.g. `TICKER-initiation-YYYYMMDD.zh.md`.
 
-A real sample initiation report on Netflix is in [`examples/NFLX-initiation-20260427.md`](examples/NFLX-initiation-20260427.md). It is committed as-produced (with its real data gaps and limitations flagged in the Open Questions section) so readers can see what the tool actually outputs, not a polished demo.
+Real sample initiation reports are in [`examples/`](examples/) — committed as-produced (including the actual data gaps and limitations flagged in each report's Open Questions section) so readers can see what the tool actually outputs, not polished demos.
 
 ## Sample brief structure
 
