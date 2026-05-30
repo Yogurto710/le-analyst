@@ -29,7 +29,7 @@ REPORTS_DIR = Path("reports")
 MODEL = "kimi-k2.6"
 BASE_URL = "https://api.moonshot.cn/v1"
 RESEARCH_MAX_TOOL_CALLS = 30
-INITIATE_MAX_TOOL_CALLS = 90  # +5 vs the original budget to fund consensus-estimate searches
+INITIATE_MAX_TOOL_CALLS = 95  # +10 vs original: +5 for subject consensus, +5 for per-peer consensus that powers the forward peer comp table
 FETCH_CHAR_LIMIT = 10000  # default for news/Yahoo/blogs (mostly nav cruft after trafilatura strip)
 TRANSCRIPT_FETCH_CHAR_LIMIT = 50000  # earnings calls — Q&A often holds the highest-impact content
 EDGAR_FETCH_CHAR_LIMIT = 40000  # 10-K sections can be very long; allow more
@@ -84,21 +84,37 @@ PHASE 1 — Gather all primary and peer data (use only edgar_search, edgar_fetch
 ==============================================================
 
 1. Use edgar_search to locate the most recent 10-K and 10-Q filings for the ticker. Then use edgar_fetch to read Item 1 (Business), Item 1A (Risk Factors), and Item 7 (MD&A) from the 10-K, and the MD&A section of the latest 10-Q.
-2. Use web_search and fetch_url to find and read the last two earnings call transcripts and the latest investor presentation.
+2. Use web_search and fetch_url to find and read the last two earnings call transcripts and the latest investor presentation. For the MOST RECENT transcript specifically, pay close attention to the Q&A section — capture each analyst's firm name and the substance of their question. These power the Sell-Side Q&A Analysis section in Phase 3. Skip generic ("any color on the quarter") questions; identify the 3-5 most substantive debates analysts pushed on.
 3. Pull these from Yahoo Finance (https://finance.yahoo.com/quote/TICKER/key-statistics/) for the trading snapshot at the top of the report: current price, market cap, enterprise value, shares outstanding, 52-week range, average daily volume (3-month), and short interest as a percent of float.
 4. Based on the business model you just learned, select 4-6 peers — a mix of direct competitors and business-model comparables. Note the rationale.
-5. For each peer, gather: current market cap, EV, latest annual revenue, revenue growth rate, EBITDA, free cash flow, stock-based compensation. Run a DEDICATED search per peer — do not rely on listicles or aggregator articles that summarize many companies at once. Acceptable patterns: "{{peer name}} revenue {{latest fiscal year}}", "{{peer name}} 10-K", "{{peer name}} investor relations".
+5. For each peer, gather ALL financial data from Yahoo Finance as a single UNIFIED source — non-negotiable for comp-table peers, because apples-to-apples comparison requires apples-to-apples sources. Yahoo presents every ticker in the same schema, eliminating the cross-source distortion that happens when one peer's revenue comes from a press release and another's from a third-party aggregator. For each peer:
+   - Market cap, EV, share price → Yahoo's quote / key-statistics page (https://finance.yahoo.com/quote/{{ticker}}/key-statistics/).
+   - LFY and LTM revenue, gross profit, EBITDA, net income, FCF, diluted EPS → Yahoo's financials page (https://finance.yahoo.com/quote/{{ticker}}/financials/), reading the most recent annual column for LFY and the TTM column for LTM.
+   - SBC and SBC-adjusted FCF → derive from the cash-flow statement on the same Yahoo page.
+   - FY+1E and FY+2E consensus revenue and EPS → Yahoo's analysis page (https://finance.yahoo.com/quote/{{ticker}}/analysis/) — same page used for the subject company's consensus in step 10.
+   Run a DEDICATED fetch per peer; do NOT rely on listicles or aggregator articles that summarize many companies at once. If a particular figure is missing from Yahoo for a peer (e.g., a private competitor with no listing, or a foreign listing Yahoo doesn't cover), note it explicitly and substitute the official 10-K / 20-F equivalent ONLY as a LABELLED exception — never mix sources silently. Mark "NM" in any comp-table cell where data genuinely isn't available.
 6. For each named competitor, run a separate search for user metrics: "{{competitor name}} monthly active users {{year}}" or "{{competitor name}} DAU {{year}}". Each metric must come from a search whose target was that specific competitor — never extract a competitor's number from an article about the subject company. ENTITY BINDING RULE: a number only belongs to a competitor if the sentence it appears in explicitly names that competitor as the subject. If the sentence is ambiguous about which entity it describes, discard the number.
 
    Source hierarchy for competitor data, prefer in this order: (1) the competitor's own SEC filings or earnings releases, (2) the competitor's official press releases or IR page, (3) reputable third-party estimates (Newzoo, Sensor Tower, data.ai) — labelled as "estimated", (4) news articles citing the above with the original source named. Never use numbers from listicles, blog posts, or aggregator "Top 10" articles without tracing to the original source. For private companies (Epic Games, Valve, etc.) every financial number is an estimate — always label it that way (e.g. "$6B estimated 2025 revenue (Sacra)").
 7. Find at least one independent third-party TAM estimate for the industry, in addition to whatever the company cites.
 8. Find the company's historical trading multiples — peak, trough, and current. If exact multiples aren't available, get stock prices at key dates (IPO, peak, recent trough) so you can approximate.
 9. Find upcoming catalysts over the next 6-12 months: next earnings date, investor day or conferences, product launches, regulatory deadlines, debt maturities, lockup expirations. Search "{{company name}} next earnings date 2026", "{{company name}} investor day 2026", and check the 10-K for any disclosed forward dates. (Wall Street consensus estimates are gathered in step 10 below and used to anchor catalyst thresholds.)
-10. WALL STREET CONSENSUS — the PRIMARY source for all forward estimates. Do NOT derive forward figures by annualizing a single quarter. Search "{{ticker}} consensus estimates {{next fiscal year}}" or "{{ticker}} analyst estimates"; the preferred free source is Yahoo Finance (https://finance.yahoo.com/quote/{{ticker}}/analysis), which aggregates consensus revenue and EPS. If it's unavailable, fall back to Koyfin, WSJ Markets, or MarketBeat. Pull: current-fiscal-year and next-fiscal-year consensus REVENUE, current-FY and next-FY consensus EPS, and the NUMBER OF ANALYSTS covering (a quality signal — >10 = reliable, <5 = thin coverage; record it). For the 1-2 key peers that will show a forward P/E, grab their consensus forward EPS too. Record the source, analyst count, and date for every consensus figure (e.g. "Yahoo Finance, 24 analysts, as of {today}"). If no consensus is findable, note that explicitly and fall back to guidance-derived forward estimates — but you MUST label them "derived from company guidance, not analyst consensus".
-11. FISCAL CALENDAR CHECK. Record the fiscal year-end month for the subject company AND every peer. Companies that don't share the same fiscal year-end cannot be compared on "latest fiscal year" alone — their reported years cover different calendar periods. For any company whose latest reported fiscal year is stale relative to the others, OR whenever the subject's fiscal year doesn't align with the calendar year, gather the last 4 reported quarters of revenue (and EBITDA / FCF where available) so a trailing-twelve-month (LTM, a.k.a. TTM) figure can be built. For the subject company, capture BOTH (a) latest completed fiscal year (LFY) revenue and (b) LTM revenue (trailing 4 quarters as of the most recent reported quarter). Note where they materially differ.
+10. WALL STREET CONSENSUS — the PRIMARY source for all forward estimates. Do NOT derive forward figures by annualizing a single quarter. Search "{{ticker}} consensus estimates {{next fiscal year}}" or "{{ticker}} analyst estimates"; the preferred free source is Yahoo Finance (https://finance.yahoo.com/quote/{{ticker}}/analysis), which aggregates consensus revenue and EPS. If it's unavailable, fall back to Koyfin, WSJ Markets, or MarketBeat. Pull: current-fiscal-year and next-fiscal-year consensus REVENUE, current-FY and next-FY consensus EPS, and the NUMBER OF ANALYSTS covering (a quality signal — >10 = reliable, <5 = thin coverage; record it). For EVERY peer in the comp table, gather consensus FY+1 and FY+2 revenue AND EPS — these power the forward EV/Revenue and forward P/E columns plus the 2-year revenue CAGR in the peer comp table. Yahoo Finance's analyst page typically has all four data points per ticker in one fetch. If a peer's consensus isn't available, mark it and proceed — don't burn 3+ searches chasing one peer's forwards. Record the source, analyst count, and date for every consensus figure (e.g. "Yahoo Finance, 24 analysts, as of {today}"). If no consensus is findable, note that explicitly and fall back to guidance-derived forward estimates — but you MUST label them "derived from company guidance, not analyst consensus".
+11. FISCAL CALENDAR + LTM SOURCING. Record the fiscal year-end month for the subject company AND every peer. Companies that don't share the same fiscal year-end cannot be compared on "latest fiscal year" alone — their reported years cover different calendar periods.
+
+LFY DEFINITION (HARD RULE): LFY = the MOST RECENT COMPLETED fiscal year, period. Do NOT substitute an earlier "last comparable year" because of M&A, divestitures, discontinued operations, or restatements. If the most recent completed fiscal year was affected by a divestiture (e.g., APP's Apps business sold mid-2025 means FY2025 is reported on a continuing-ops basis), use the continuing-ops FY2025 figure as LFY — do not regress to FY2024. The trajectory across the trailing columns (prior FY → LFY → LTM) is itself how the report communicates a basis change; don't hide it by skipping a year.
+
+For the SUBJECT company, gather:
+(a) Latest completed fiscal year (LFY) figures from filings: revenue, gross profit, operating income, net income, diluted EPS, EBITDA (or adj. EBITDA where reported), free cash flow.
+(b) LTM (trailing-twelve-month / TTM) figures for the same metrics — pull DIRECTLY from Yahoo Finance's financials page at https://finance.yahoo.com/quote/{{ticker}}/financials/, which presents a TTM column ready-made. This is more reliable than summing 4 quarters of disclosed line items, especially for metrics that aren't always quarterly disclosed (EBITDA, FCF).
+(c) Quarterly REVENUE for two purposes: the completed quarters of the CURRENT fiscal year, AND the matching quarters of the PRIOR fiscal year. These power the Phase 2 LTM-revenue cross-check (LTM = LFY + current-FY stub quarters - matching prior-FY stub quarters), which catches off-by-one-quarter errors when Yahoo's TTM data is mislabelled.
+
+(Peer historical and forward financials are gathered from Yahoo Finance per step 5 above, so the comp table is built on a unified source across all peers. Step 11 here only records peer fiscal year-ends to detect calendar mismatches that would distort LFY-on-LFY comparisons.)
+
+Note where the subject's LFY and LTM revenue materially differ — this drives the Quality-of-Earnings flag in Phase 3.
 12. CYCLICAL-INDUSTRY DATA — gather this ONLY if the subject operates in an industry with well-documented boom-bust cycles (memory/commodity semiconductors, commodity chemicals, shipping, energy, mining, and the like). Skip this item entirely for companies where cyclicality is not the primary analytical lens (e.g. Netflix, Roblox). When it applies, gather: (a) historical cycle duration for this industry (how many quarters past upcycles and downcycles have lasted); (b) 3-4 leading indicators of a cycle turn for this specific industry (e.g. inventory days, spot-vs-contract price spread, fab/plant utilization, book-to-bill, freight day-rates, rig counts) — for each, the current reading AND the historical level that has signalled prior turns; and (c) the subject company's CapEx and depreciation & amortization for the latest fiscal year (plus a couple of prior years if readily available) to support a supply-side CapEx/Depreciation ratio.
 
-PHASE 1 BUDGET DISCIPLINE: Aim to finish gathering in under 60 tool calls. If you find yourself unable to locate a specific number after 2-3 search attempts, stop searching for it — note it as missing and move on. Missing data goes to Open Questions; it does not justify more searches.
+PHASE 1 BUDGET DISCIPLINE: Aim to finish gathering in under 65 tool calls. If you find yourself unable to locate a specific number after 2-3 search attempts, stop searching for it — note it as missing and move on. Missing data goes to Open Questions; it does not justify more searches.
 
 ==============================================================
 PHASE 2 — Compute derived metrics (use ONLY python_repl)
@@ -124,8 +140,12 @@ For the subject company:
 - Forward EV/Revenue, forward EV/EBITDA, and forward P/E for BOTH forward years (FY+1 and FY+2) using Wall Street consensus from Phase 1 (consensus revenue and EPS) as the PRIMARY source. Use a guidance midpoint only if no consensus exists, and label it guidance-derived.
 - Implied current market share against each TAM estimate
 
-For each peer:
-- EV/Revenue, EV/EBITDA, P/FCF, P/E (LTM) (use "NM" for negative EBITDA, FCF, or EPS)
+For each peer (and the subject, for the comp-table row):
+- 2-year Revenue CAGR = (FY+2E revenue / LFY revenue) ** (1/2) - 1. Use LFY actual (from filings) and FY+2E consensus (from Phase 1) as the two endpoints — clean year-to-year growth that isolates the forward trajectory and avoids LTM-quarter noise.
+- EV/Revenue (LTM), EV/Revenue (FY+1E), EV/Revenue (FY+2E) — divide EV by LTM revenue, FY+1E consensus revenue, and FY+2E consensus revenue respectively.
+- P/E (LTM), P/E (FY+1E), P/E (FY+2E) — divide price by LTM diluted EPS, FY+1E consensus EPS, and FY+2E consensus EPS respectively. "NM" for any P/E where the relevant EPS is negative or zero.
+- If consensus is unavailable for a peer's FY+1E or FY+2E figure, mark that specific cell "NM" — do not invent a number to make the column complete, and do not extrapolate one peer's growth onto another.
+- MEDIAN row (HARD RULE — the model has previously violated this): compute the median of each multiple/CAGR column across the PEERS ONLY (exclude the subject). NEVER compute a median from fewer than 3 valid non-"NM" values. The median of two values is NOT a median — it's an average. When fewer than 3 valid values exist for a column, you MUST write "—" in that column's median cell AND add the footnote "insufficient peer coverage" below the table naming which columns were affected. On the APP test run the model averaged 2 valid P/E values across 4 peers and printed it as the median — do not do this.
 
 FISCAL BASIS RECONCILIATION (required — the comp table and snapshot depend on this):
 - Choose ONE revenue basis that can be applied consistently to EVERY company in the comp table. Use LTM/TTM when fiscal years are misaligned (the usual case); LFY is acceptable only when all companies share the same fiscal year-end. Compute each company's comp-table multiples (EV/Revenue, EV/EBITDA, P/FCF) from THAT single basis. Record which basis you chose — you must label it in the report.
@@ -138,6 +158,11 @@ FISCAL BASIS RECONCILIATION (required — the comp table and snapshot depend on 
   (b) Margin-ordering check: no forward margin may exceed the line above it in the P&L. Enforce Gross margin >= EBITDA margin >= Operating margin >= Net margin. If any estimate breaks this ordering, flag it and recompute.
   (c) Annualization check: if you ever derive a forward figure by annualizing a single quarter, compare it against the Phase 1 consensus. If they diverge by more than 20%, flag the divergence and PREFER the consensus figure, with a one-line note explaining the difference.
   (d) Multiple reconciliation: forward EV/Revenue must equal current EV / forward revenue, forward EV/EBITDA must equal current EV / forward EBITDA, and forward P/E must equal price / forward EPS. Do not print a multiple that does not reconcile to the figures shown alongside it.
+  (e) LTM revenue cross-check: verify the Yahoo Finance LTM revenue against the filing-derived equivalent — LFY revenue + sum of current-FY completed quarter revenues - sum of matching prior-FY quarter revenues (e.g. for a calendar-year company reporting through Q1: LTM = FY-1 + Q1-current - Q1-prior).
+
+      BASIS CONSISTENCY (critical when a divestiture or spin-off occurred in the trailing twelve months): ALL periods in the cross-check MUST be on the SAME continuing-operations basis. For the prior-year stub quarter, ALWAYS pull the restated comparable period from the MOST RECENT 10-Q/10-K — NOT the original quarter from the older filing. Example: APP sold its Apps business mid-2025; the Q1 2025 figure used in the cross-check must come from the Q1 2026 10-Q (which restates Q1 2025 on a continuing-ops basis to ~$1.16B), NOT the original Q1 2025 10-Q (which still included Apps revenue at ~$1.48B). Mixing as-reported with restated bases produces a PHANTOM discrepancy and falsely flags Yahoo's TTM as wrong — this happened on the first APP test run and is the canonical failure mode of this check.
+
+      Tolerance ±2%. If the discrepancy still exceeds 2% AFTER confirming basis consistency, PREFER the filing-derived figure and add a one-line footnote in the Financial Summary explaining the source. This catches the off-by-one-quarter class, where Yahoo's TTM column has accidentally been mislabelled or aggregated incorrectly.
 
 PHASE 2 STOP RULE: Once you have called python_repl, you are NOT permitted to call edgar_search, edgar_fetch, web_search, or fetch_url again. If a metric came out wrong because of bad input, fix the input in your next python_repl call — do not search the web. After at most 3 python_repl calls, proceed directly to Phase 3.
 
@@ -155,31 +180,60 @@ Output format:
 A single-row markdown table with columns: Price | Mkt Cap | 52W Range | Avg Daily Volume | Short Interest | EV/Rev (trailing) | EV/Rev (Fwd) | EPS (LTM, dil.) | EPS (Fwd, cons.) | P/E (LTM) | P/E (Fwd). Use the Yahoo Finance data from Phase 1 and the figures computed in Phase 2. The trailing EV/Rev column header MUST name the revenue basis it uses — write "EV/Rev (LTM)" or "EV/Rev (FY2025)", not a bare "EV/Rev" — and use the SAME basis as the Peer Comp Table; if they must differ, label each and add a one-line note. Forward EPS and P/E (Fwd) use Wall Street consensus from Phase 1, not guidance. Format: price and EPS as $XX.XX, market cap as $X.XB, 52W range as $low – $high, avg daily volume as X.XM, short interest as X.X%, multiples as X.Xx. Show "NM" for any P/E whose EPS is negative or zero. Show "—" where a forward figure has no consensus (and no guidance). Below the table add a single italicized line: *Data as of [today's date]; forward figures are Wall Street consensus ([N] analysts, [source], [date]).*
 
 ## Business Overview
-What the company does, revenue model, segment breakdown, key operating metrics management tracks. Cite the 10-K Item 1.
+What the company does, revenue model, segment breakdown, key operating metrics management tracks, and the company's CURRENT strategic priorities (1-2 sentences distilled from the most recent investor day, earnings letter, or shareholder letter — what management says it's investing in and executing against right now). Cite the 10-K Item 1 plus the relevant earnings call or letter for the strategy framing. Numbers and forward guidance do not belong here — they live in Financial Profile / Forward Estimates.
 
 ## Financial Profile
-Brief prose intro that frames the company's TRAJECTORY — not just the last fiscal year, but where it sits now (LTM) and where the Street expects it to go. Lead with the takeaways that matter most. Historical columns are from filings; forward columns are Wall Street consensus from Phase 1 and must be labelled as such.
+Brief prose intro that frames the company's TRAJECTORY — not just the last fiscal year, but where it sits now (LTM) and where the Street expects it to go. Lead with the takeaways that matter most. Include a one-line balance-sheet callout in this intro paragraph: "Net cash of $X.XB on $X.XB cash and equivalents and $X.XB total debt as of [most recent period end]" (or "Net debt of $X.XB" when negative). Do not give the balance sheet its own table — that single sentence is the whole treatment.
+
+Numbers in the Financial Summary come from filings (prior FY, LFY) and Yahoo Finance's TTM column (LTM); Forward Estimates come from Wall Street consensus and management guidance, both gathered in Phase 1.
 
 ### Financial Summary
-A markdown table that puts trailing AND forward periods side by side, so the trajectory — not just last year — is front-and-center. Columns, left to right: prior fiscal year | latest fiscal year (LFY) | LTM | FY+1 estimate (cons.) | FY+2 estimate (cons.). At a point in time like today, BOTH forward years are useful benchmarks — include both. Required rows: Revenue, Gross Profit (or Gross Margin %), Operating Income/Loss, Net Income/Loss, Adjusted EBITDA (if reported), Free Cash Flow, Diluted EPS. Populate the forward columns from consensus where it exists (at minimum Revenue and Diluted EPS); use "—" where no consensus figure is available. Historical columns stay sourced from filings only. If the company reports segments, include a Revenue by Segment block (one row per segment) within or immediately below this table. Format dollar values consistently (e.g. all $M or all $B).
+A trailing-only markdown table — clean, no blanks. Columns, left to right: prior fiscal year | latest fiscal year (LFY) | LTM. Required rows: Revenue, Gross Profit (or Gross Margin %), Operating Income/Loss, Net Income/Loss, Adjusted EBITDA (if reported), Free Cash Flow, Diluted EPS. Add a YoY change column if helpful, but the LFY-vs-LTM column already conveys trajectory. Historical columns (prior FY, LFY) come from filings; the LTM column comes from Yahoo Finance's TTM, verified against the Phase 2 LTM revenue cross-check — if the cross-check failed, use the filing-derived LTM and footnote the source. If the company reports segments, include a Revenue by Segment block (one row per segment) within or immediately below this table. Format dollar values consistently (e.g. all $M or all $B).
 
-### Balance Sheet Snapshot
-Markdown table of balance sheet position at the most recent period end. Required rows: Cash & Equivalents, Short-term Investments, Long-term Investments, Total Cash & Investments, Total Debt, Net Cash Position (computed = Total Cash & Investments - Total Debt). All values in the same units.
+### Forward Estimates
+This section has TWO parts — consensus, then management guidance — and ends with a one-line gap commentary. This is the dedicated home for forward operating expectations; do not duplicate these figures in the Financial Summary or in Forward Context (which uses them downstream to compute multiples).
 
-### Key Ratios
-Markdown table of derived metrics computed via python_repl. Include the subject company's growth rates, FCF margin/yield, SBC %, SBC-adjusted FCF yield, revenue/bookings per DAU, and net cash position. Also include, as their own rows: Diluted EPS (LFY), LTM Diluted EPS, Forward EPS (consensus), EPS YoY Growth (LFY), P/E (LTM), and P/E (Forward). If the company reports adjusted EPS, add a row for it and name what it excludes. Use "NM" for any P/E built on negative EPS.
+**Wall Street consensus** — markdown table with two columns: FY+1E and FY+2E. Rows where consensus exists: Revenue, Revenue Growth %, Gross Margin % (if covered), Adjusted EBITDA (if covered), EBITDA Margin % (if covered), Operating Margin % (if covered), Net Income (if covered), Diluted EPS. At minimum Revenue and Diluted EPS will always be present; the other rows depend on how richly the company is covered. Use "—" only where consensus is genuinely unavailable. Cite the source (Yahoo Finance, Visible Alpha, Koyfin, etc.), analyst count, and date in a single italicized line below the table.
+
+**Management guidance** — short bulleted list of every forward guidance figure the company has issued (next quarter and/or full year): revenue range, operating margin, EBITDA, FCF, EPS, or any other line item management quantified. Cite the source (earnings call, press release, investor day) and the date of each guidance bullet. If the company has not issued any forward guidance, write a single sentence to that effect and skip the bullets — don't fabricate or paraphrase color commentary as quantitative guidance.
+
+**Gap commentary** — one sentence on consensus vs. guidance for any line where both exist: "Consensus FY+1 revenue ($X) implies [Y]% growth vs management's guided range of $A-$B (~Z% midpoint), suggesting analysts are [above / below / in line with] management." Skip if guidance is absent or doesn't overlap consensus.
 
 ### Quality-of-Earnings Notes
-Whenever a derived metric materially diverges from the headline number, add one short sentence flagging the divergence. Examples of triggers (not exhaustive):
+Whenever a derived metric materially diverges from the headline number, add one short sentence flagging the divergence. Triggers (not exhaustive):
 - SBC-adjusted FCF is less than 50% of reported FCF — note SBC dilution materially erodes economic FCF.
-- Adjusted EBITDA differs from GAAP operating income by more than 25% — note what's being added back.
+- SBC as % of revenue is above 15% — quantify share-count creep over the last 3-4 years if visible (this is the dilution story the EPS series may not fully tell).
+- Adjusted EBITDA differs from GAAP operating income by more than 25% — note what's being added back (typically SBC, intangible amortization, restructuring).
 - FCF and net income differ significantly — note working capital, deferred revenue, or non-cash items driving the gap.
-- Bookings growth diverges from revenue growth by more than 5 points — note what the deferred revenue dynamic implies.
+- Bookings growth diverges from revenue growth by more than 5 points — note what the deferred-revenue dynamic implies.
+- FCF margin under 5% or above 30% — flag as a structural note (capital intensity vs. asset-light advantage).
+- For cyclical-industry names only: CapEx/Depreciation ratio above ~1.5x — flag as capacity buildout that historically precedes oversupply.
+- LTM revenue and LFY revenue differ by more than 15% — restate both and explain the divergence (the same flag set in Phase 2 that drives the Peer Comp Table footnote).
 
 Do not add commentary when the headline and derived numbers agree directionally. The point is to flag where the surface story misleads, not to narrate every metric.
 
-## Management Commentary
-Key themes from recent earnings calls, forward guidance, strategic priorities, and any analyst concerns the CEO/CFO addressed.
+## Sell-Side Q&A Analysis
+A focused look at the sell-side analyst Q&A from the company's most recent earnings call. The questions sell-side analysts ASK reveal what the analytical debates are right now — independent of how management answered. This is the analyst-facing complement to Forward Estimates (consensus tells you where they expect numbers to land; Q&A tells you what they actually doubt).
+
+Open with one short framing paragraph: which call (period + date), how many analyst firms participated, the 2-3 dominant focus areas, and the overall tone (constructively skeptical / broadly aligned / openly bearish, etc.).
+
+Then 3-5 themes maximum, each as a sub-block:
+
+### Theme: [short title]
+- **Probed by:** [analyst firm(s)]
+- **Sharpest question:** 1-2 sentences capturing the most pointed framing of the debate.
+- **Management response:** 1-2 sentences capturing how management answered, including any specific data points or hedges.
+- **What it implies:** 1 sentence on what this debate signals for the investment story.
+
+Discipline:
+- Cap at 5 themes; cap each theme at ~75 words; cap the whole section at ~500 words.
+- Skip generic questions ("what are your priorities," "any color on the quarter"). Only include themes where analysts pushed on something substantive.
+- Cite the earnings call transcript URL. If no transcript is available (rare), skip this section with a one-line placeholder.
+- Low-coverage edge case: if fewer than 3 distinct firms participated in Q&A (small cap, thin coverage), shrink to the actual themes available — do not fabricate to fill space.
+
+Tone discipline:
+- Report what was asked and answered. Do NOT editorialize on whether management's response was credible — that judgment belongs in Key Debates (Investment Framework), framed as the analyst's view, not asserted as fact.
+- Do not introduce information that wasn't in the Q&A. Strategic context belongs in Business Overview; forward guidance belongs in Forward Estimates.
 
 ## Market Opportunity
 Begin with the company's own TAM claim. Then present at least one independent third-party TAM estimate. If the figures diverge, explain likely reasons (different scope, adjacent markets, methodology). Compute and show the company's implied current market share against each TAM estimate. End with a one-sentence note on TAM methodology limitations for this industry.
@@ -202,18 +256,25 @@ If competitor data could not be found for a given peer, include the row with "No
 Open by stating the company's CURRENT valuation through the single lens that best fits it — this is how the market is pricing the stock right now, and the rest of this section (and the Investment Framework) should revolve around it:
 - If the company is comfortably profitable (positive, non-erratic net income / EPS), lead with FORWARD P/E — current price / consensus EPS — for BOTH FY+1 and FY+2.
 - Otherwise (loss-making, only marginally profitable, or earnings too noisy to anchor on), lead with FORWARD EV/REVENUE — current EV / consensus revenue — for BOTH FY+1 and FY+2 (use forward EV/EBITDA instead where EBITDA is the cleaner industry metric).
-Both use Wall Street consensus from Phase 1 — this reflects how analysts are framing the go-forward period — so cite the source and analyst count. State the chosen forward multiple for FY+1 and FY+2, then immediately position it against the peer set and the company's own history (cheap or rich, and why). After that, show market cap, EV, and the supporting trailing multiples with their inputs and arithmetic.
+Both use Wall Street consensus from Phase 1 — this reflects how analysts are framing the go-forward period — so cite the source and analyst count. State the chosen forward multiple for FY+1 and FY+2, then immediately position it against the PEER MEDIAN (from the Peer Comp Table below) and the company's own history (cheap or rich, and why). After that, show market cap, EV, and the supporting trailing multiples with their inputs and arithmetic.
 
 ### Peer Comp Table
-One-sentence rationale for peer selection, then a markdown table with the subject company in row 1 and 4-6 peers below. Columns: Company | EV ($B) | Rev ($B) | Rev Growth | EV/Rev | EV/EBITDA | P/FCF | P/E (LTM). Use "NM" for non-meaningful values (negative EBITDA, FCF, or EPS). If the table grows beyond 8 columns, drop P/FCF before anything else — P/E is more universally referenced for most companies. Add a one-line note below the table positioning the subject company vs peers (premium or discount, and why).
+One-sentence rationale for peer selection, then a markdown table with the subject in row 1, 4-6 peers below, and a Median row at the bottom. Columns: Company | EV ($B) | Rev (basis, $B) | 2-yr Rev CAGR | EV/Rev (LTM) | EV/Rev (FY+1E) | EV/Rev (FY+2E) | P/E (LTM) | P/E (FY+1E) | P/E (FY+2E). All forward columns use Wall Street consensus gathered in Phase 1. Forward multiples are the headline of this table — the trailing columns are anchors, not the story.
 
-Single-basis rules (non-negotiable — these come straight from Phase 2):
-- Every company in the table must use the SAME revenue basis (the one chosen in Phase 2). Label it in the Rev column header: "Rev (LTM, $B)" or "Rev (FY2025, $B)". A bare "Rev ($B)" is not acceptable when fiscal years are misaligned.
-- The multiples must be computed from the SAME revenue basis shown in the table. If the Rev column is FY2025 revenue, EV/Rev must equal EV ÷ FY2025 revenue. Quote the verified numbers from Phase 2 — do not mix a trailing multiple with a fiscal-year revenue figure.
-- When the subject company's LTM revenue differs from its LFY revenue by more than 15% (the flag set in Phase 2), add a row or a footnote immediately below the table showing BOTH figures and a one-line reason for the divergence — e.g. "LTM revenue of $58B vs FY2025 revenue of $37.4B reflects explosive QoQ growth in Q1-Q2 FY2026."
+Single-period-per-column rules (non-negotiable — these come straight from Phase 2):
+- Each multiple column applies ONE period basis to every company in that column: the LTM column uses every company's LTM revenue; the FY+1E column uses every company's FY+1E consensus revenue; the FY+2E column uses every company's FY+2E consensus revenue. NEVER mix periods within a column.
+- Every multiple must reconcile to the figures alongside it: EV/Rev (FY+1E) must equal EV ÷ FY+1E consensus revenue for that row; P/E (FY+1E) must equal price ÷ FY+1E consensus EPS. Quote the verified numbers from Phase 2.
+- Label the trailing Rev column header with its basis ("Rev (LTM, $B)" or "Rev (FY2025, $B)") — a bare "Rev ($B)" is not acceptable when peer fiscal years are misaligned.
+- Use "NM" for any P/E where the relevant EPS is negative or zero, and for any cell where consensus isn't available for that peer-period. Do not invent figures to fill gaps.
+- 2-yr Rev CAGR uses LFY actual (from filings) as the starting point and FY+2E consensus as the endpoint for EVERY company; do not substitute LTM for LFY in any single row.
+- Median row (HARD RULE): median of each column across peers ONLY (exclude the subject). Skip "NM" cells in the median calculation. If fewer than 3 valid non-"NM" values exist in a column, you MUST write "—" and footnote "insufficient peer coverage" — do NOT average two values and call it a median. (See the Phase 2 MEDIAN HARD RULE for the full statement of this discipline.)
+
+Below the table, add a one-line positioning note relative to the PEER MEDIAN (not individual peers) — e.g. "Trades at 5.6x FY+1E EV/Rev vs peer median of 7.8x; the discount reflects [reason]." When the subject's LTM revenue differs from its LFY revenue by more than 15% (the flag set in Phase 2), add a separate footnote showing both figures and the reason — e.g. "LTM revenue of $58B vs FY2025 revenue of $37.4B reflects explosive QoQ growth in Q1-Q2 FY2026."
 
 ### Forward Context
-Use Wall Street consensus from Phase 1 as the PRIMARY source for forward figures — consensus revenue and EPS (and EBITDA where available), for BOTH the next fiscal year (FY+1) and the year after (FY+2), since at a point in time both forward years are useful benchmarks. Frame it as the Street's view, e.g. "Wall Street consensus expects FY2026 revenue of $X", and always cite source, analyst count, and date. Compute forward EV/Revenue, forward EV/EBITDA, and forward P/E via python_repl and show the inputs (the consensus figure plus current EV or price). If the company has also issued guidance and it diverges meaningfully from consensus, show BOTH and quantify the gap: "Consensus FY2026 revenue: $X (N analysts). Company guidance implies: $Y. The [Z]% gap suggests analysts are [above/below] management." Every forward figure must pass the Phase 2 sanity checks — forward EBITDA stays below implied forward gross profit, the margin ordering holds, and every forward multiple reconciles to the figure it is built from. Add one sentence on how forward multiples compare to trailing. Consensus is a reference point, not the tool's own forecast and not ground truth — note it if it looks stale relative to recent guidance, and never present it as your own projection ("Wall Street consensus expects…" / "the Street is modeling…", not "we forecast…"). If neither consensus nor guidance is available, write "No forward consensus or guidance available; trailing multiples above are the latest." and skip the table.
+This subsection applies the consensus figures already presented in **Forward Estimates** (Financial Profile) to the company's current EV and price, producing forward valuation multiples. Do NOT re-cite consensus values or restate the consensus-vs-guidance gap here — those live in Forward Estimates. The job here is multiples.
+
+Compute via python_repl, for BOTH FY+1 and FY+2: forward EV/Revenue, forward EV/EBITDA (where consensus EBITDA exists), and forward P/E. Show the inputs alongside each multiple (the consensus figure plus current EV or price). Every forward figure must pass the Phase 2 sanity checks — forward EBITDA stays below implied forward gross profit, the margin ordering holds, and every forward multiple reconciles to the figures shown alongside it. Add one sentence on how forward multiples compare to trailing — analysts shouldn't be working off stale numbers when newer ones are available. If neither consensus nor guidance is available (the rare case flagged in Forward Estimates), write "No forward consensus or guidance available; trailing multiples above are the latest." and skip the multiples block.
 
 ### Historical Context
 Concrete data points on where the current multiple sits versus history. Cite peak multiple and date, trough multiple and date, and current multiple. If exact multiples are unavailable, approximate from stock prices at those dates and contemporaneous revenue figures, and flag the approximation.
@@ -749,6 +810,15 @@ def agentic_loop(
                 )
 
             result = run_tool(tavily, tc["name"], tool_input)
+
+            if verbose:
+                # Truncate long results so the log stays readable; python_repl
+                # outputs are capped at 4KB so they nearly always fit, while
+                # fetch_url / edgar_fetch can return up to 50K.
+                limit = 1500
+                snippet = result if len(result) <= limit else result[:limit] + f"\n... [truncated; {len(result)} total chars]"
+                typer.echo(f"  -> {snippet}", err=True)
+
             messages.append(
                 {
                     "role": "tool",

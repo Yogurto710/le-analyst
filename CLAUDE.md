@@ -24,11 +24,11 @@ The whole tool runs an **agentic tool-use loop** against Kimi K2.6 via the OpenA
 **`research` command** is a simple loop: gather → write brief. Tool budget 30.
 
 **`initiate` command** enforces three sequential phases via the system prompt:
-1. **Gather** (Phase 1): SEC filings, transcripts, Yahoo key-stats, per-peer financials, TAM, historical multiples, catalysts, Wall Street consensus (revenue + EPS). Aim under 60 calls.
+1. **Gather** (Phase 1): SEC filings, transcripts, Yahoo key-stats, per-peer financials, TAM, historical multiples, catalysts, Wall Street consensus (revenue + EPS, FY+1 and FY+2, subject AND every peer). Aim under 65 calls.
 2. **Compute** (Phase 2): `python_repl` for every derived metric and peer multiple. Hard cap of 3 calls. **Once Phase 2 begins, no more searches allowed.**
 3. **Synthesize** (Phase 3): write the report. No tool calls.
 
-Total `initiate` tool budget: 90 (raised from 85 to fund consensus-estimate searches).
+Total `initiate` tool budget: 95 (raised from 90 to fund per-peer consensus searches for the forward peer comp table).
 
 ## Localization (`analyst translate`)
 
@@ -75,11 +75,11 @@ These are the rules and design decisions accumulated over several rounds of iter
 
 1. Trading Snapshot (Price, Mkt Cap, 52W Range, Avg Daily Volume, Short Interest, EV/Rev, EV/Rev Fwd, EPS LTM, EPS Fwd, P/E LTM, P/E Fwd)
 2. Business Overview
-3. Financial Profile (Financial Summary [prior FY / LFY / LTM / FY+1E / FY+2E, consensus forward cols], Balance Sheet Snapshot, Key Ratios, Quality-of-Earnings Notes)
-4. Management Commentary
+3. Financial Profile (Financial Summary [prior FY / LFY / LTM — trailing only], Forward Estimates [consensus FY+1 / FY+2 table + management guidance + gap commentary], Quality-of-Earnings Notes; net cash position called out inline in the intro — no separate balance-sheet table)
+4. Sell-Side Q&A Analysis (firms participating + 3-5 themed sub-blocks of the most-probed Q&A topics from the latest earnings call: Probed by / Sharpest question / Management response / What it implies; capped ~500 words; replaces the old Management Commentary section — strategic priorities moved to Business Overview, forward guidance to Forward Estimates)
 5. Market Opportunity (company TAM + independent TAM + implied share + methodology caveat)
 6. Competitive Landscape (Stated Position + Independent Evidence table)
-7. Valuation Context (opens with the primary forward valuation lens — forward P/E if comfortably profitable, else forward EV/Rev, both FY+1 and FY+2 on consensus — then Peer Comp Table, Forward Context, Historical Context)
+7. Valuation Context (opens with the primary forward valuation lens — forward P/E if comfortably profitable, else forward EV/Rev, both FY+1 and FY+2 on consensus, positioned vs peer median — then Peer Comp Table [LTM + FY+1E + FY+2E EV/Rev and P/E columns, 2-yr Rev CAGR, peer Median row], Forward Context, Historical Context)
 8. Key Risks
 9. Investment Framework (Bull/Bear/Base + Key Debates + Catalyst Calendar)
 10. Open Questions
