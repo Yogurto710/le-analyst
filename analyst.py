@@ -2,10 +2,12 @@ import os
 import re
 import sys
 import json
+import time
 import httpx
 import typer
 import datetime
 import subprocess
+import collections
 import trafilatura
 from pathlib import Path
 from openai import OpenAI
@@ -84,15 +86,27 @@ PHASE 1 — Gather all primary and peer data (use only edgar_search, edgar_fetch
 ==============================================================
 
 1. Use edgar_search to locate the most recent 10-K and 10-Q filings for the ticker. Then use edgar_fetch to read Item 1 (Business), Item 1A (Risk Factors), and Item 7 (MD&A) from the 10-K, and the MD&A section of the latest 10-Q.
+
+   FOREIGN PRIVATE ISSUERS (China ADRs like NTES / BABA / JD, EU companies, etc.): the equivalent SEC filings are Form 20-F (annual) and Form 6-K (interim, irregular timing). The 20-F item numbering differs from 10-K — read Item 4 (Information on the Company, ≈ 10-K Item 1), Item 3.D (Risk Factors, ≈ 10-K Item 1A), and Item 5 (Operating and Financial Review, ≈ 10-K Item 7 / MD&A). If edgar_search returns no 10-K for a US-listed foreign ticker, search for 20-F instead. Quarterly results for foreign issuers come via 6-K (or via press release captured separately) — they do not file 10-Qs.
 2. Use web_search and fetch_url to find and read the last two earnings call transcripts and the latest investor presentation. For the MOST RECENT transcript specifically, pay close attention to the Q&A section — capture each analyst's firm name and the substance of their question. These power the Sell-Side Q&A Analysis section in Phase 3. Skip generic ("any color on the quarter") questions; identify the 3-5 most substantive debates analysts pushed on.
 3. Pull these from Yahoo Finance (https://finance.yahoo.com/quote/TICKER/key-statistics/) for the trading snapshot at the top of the report: current price, market cap, enterprise value, shares outstanding, 52-week range, average daily volume (3-month), and short interest as a percent of float.
 4. Based on the business model you just learned, select 4-6 peers — a mix of direct competitors and business-model comparables. Note the rationale.
-5. For each peer, gather ALL financial data from Yahoo Finance as a single UNIFIED source — non-negotiable for comp-table peers, because apples-to-apples comparison requires apples-to-apples sources. Yahoo presents every ticker in the same schema, eliminating the cross-source distortion that happens when one peer's revenue comes from a press release and another's from a third-party aggregator. For each peer:
+5. For each peer, gather ALL financial data from a UNIFIED source — non-negotiable for comp-table peers, because apples-to-apples comparison requires apples-to-apples sources. The chosen source depends on peer LISTING VENUE:
+
+   **US-LISTED PEERS (default for most reports) → Yahoo Finance.** Yahoo presents every US-listed ticker in the same schema. For each US-listed peer:
    - Market cap, EV, share price → Yahoo's quote / key-statistics page (https://finance.yahoo.com/quote/{{ticker}}/key-statistics/).
    - LFY and LTM revenue, gross profit, EBITDA, net income, FCF, diluted EPS → Yahoo's financials page (https://finance.yahoo.com/quote/{{ticker}}/financials/), reading the most recent annual column for LFY and the TTM column for LTM.
    - SBC and SBC-adjusted FCF → derive from the cash-flow statement on the same Yahoo page.
    - FY+1E and FY+2E consensus revenue and EPS → Yahoo's analysis page (https://finance.yahoo.com/quote/{{ticker}}/analysis/) — same page used for the subject company's consensus in step 10.
-   Run a DEDICATED fetch per peer; do NOT rely on listicles or aggregator articles that summarize many companies at once. If a particular figure is missing from Yahoo for a peer (e.g., a private competitor with no listing, or a foreign listing Yahoo doesn't cover), note it explicitly and substitute the official 10-K / 20-F equivalent ONLY as a LABELLED exception — never mix sources silently. Mark "NM" in any comp-table cell where data genuinely isn't available.
+
+   **HK-LISTED PEERS (e.g., Tencent 0700.HK, Kuaishou 1024.HK for a China-ADR report) → stockanalysis.com.** Yahoo's HK pages only cover the snapshot — `/financials/` and `/analysis/` return 404 for HK tickers. stockanalysis.com fills the gap with clean tabular data:
+   - Quote page → https://stockanalysis.com/quote/hkg/{{code}}/ — market cap, revenue TTM, EPS TTM, PE, **Forward PE**, shares out, target price.
+   - Financials page → https://stockanalysis.com/quote/hkg/{{code}}/financials/ — full income statement: TTM / FY-1 / FY-2 / FY-3 (revenue, gross profit, growth %).
+   - Forecast page → https://stockanalysis.com/quote/hkg/{{code}}/forecast/ — analyst price target + recommendation breakdown. NOTE: only FY+1 forward EPS is reliably extractable (derive as `current price ÷ Forward PE`). FY+2 EPS for HK peers often isn't available — mark "NM" in the FY+2E P/E column for those peers; the median rule handles this cleanly.
+
+   **MIXED BASKET (some US-listed + some HK-listed peers, e.g., NTES with Tencent + EA + Take-Two):** Yahoo for the US-listed members, stockanalysis.com for the HK-listed members. Footnote the source split below the comp table — e.g., "US peers from Yahoo Finance; HK peers from stockanalysis.com." This is a LABELLED, intentional split — NOT silent source mixing.
+
+   Run a DEDICATED fetch per peer; do NOT rely on listicles or aggregator articles. If a particular figure is missing for a peer (private competitor, niche foreign listing not on either source), note it explicitly and substitute the official filing only as a LABELLED exception — never mix sources silently. Mark "NM" in any comp-table cell where data genuinely isn't available.
 6. For each named competitor, run a separate search for user metrics: "{{competitor name}} monthly active users {{year}}" or "{{competitor name}} DAU {{year}}". Each metric must come from a search whose target was that specific competitor — never extract a competitor's number from an article about the subject company. ENTITY BINDING RULE: a number only belongs to a competitor if the sentence it appears in explicitly names that competitor as the subject. If the sentence is ambiguous about which entity it describes, discard the number.
 
    Source hierarchy for competitor data, prefer in this order: (1) the competitor's own SEC filings or earnings releases, (2) the competitor's official press releases or IR page, (3) reputable third-party estimates (Newzoo, Sensor Tower, data.ai) — labelled as "estimated", (4) news articles citing the above with the original source named. Never use numbers from listicles, blog posts, or aggregator "Top 10" articles without tracing to the original source. For private companies (Epic Games, Valve, etc.) every financial number is an estimate — always label it that way (e.g. "$6B estimated 2025 revenue (Sacra)").
@@ -102,7 +116,9 @@ PHASE 1 — Gather all primary and peer data (use only edgar_search, edgar_fetch
 10. WALL STREET CONSENSUS — the PRIMARY source for all forward estimates. Do NOT derive forward figures by annualizing a single quarter. Search "{{ticker}} consensus estimates {{next fiscal year}}" or "{{ticker}} analyst estimates"; the preferred free source is Yahoo Finance (https://finance.yahoo.com/quote/{{ticker}}/analysis), which aggregates consensus revenue and EPS. If it's unavailable, fall back to Koyfin, WSJ Markets, or MarketBeat. Pull: current-fiscal-year and next-fiscal-year consensus REVENUE, current-FY and next-FY consensus EPS, and the NUMBER OF ANALYSTS covering (a quality signal — >10 = reliable, <5 = thin coverage; record it). For EVERY peer in the comp table, gather consensus FY+1 and FY+2 revenue AND EPS — these power the forward EV/Revenue and forward P/E columns plus the 2-year revenue CAGR in the peer comp table. Yahoo Finance's analyst page typically has all four data points per ticker in one fetch. If a peer's consensus isn't available, mark it and proceed — don't burn 3+ searches chasing one peer's forwards. Record the source, analyst count, and date for every consensus figure (e.g. "Yahoo Finance, 24 analysts, as of {today}"). If no consensus is findable, note that explicitly and fall back to guidance-derived forward estimates — but you MUST label them "derived from company guidance, not analyst consensus".
 11. FISCAL CALENDAR + LTM SOURCING. Record the fiscal year-end month for the subject company AND every peer. Companies that don't share the same fiscal year-end cannot be compared on "latest fiscal year" alone — their reported years cover different calendar periods.
 
-LFY DEFINITION (HARD RULE): LFY = the MOST RECENT COMPLETED fiscal year, period. Do NOT substitute an earlier "last comparable year" because of M&A, divestitures, discontinued operations, or restatements. If the most recent completed fiscal year was affected by a divestiture (e.g., APP's Apps business sold mid-2025 means FY2025 is reported on a continuing-ops basis), use the continuing-ops FY2025 figure as LFY — do not regress to FY2024. The trajectory across the trailing columns (prior FY → LFY → LTM) is itself how the report communicates a basis change; don't hide it by skipping a year.
+LFY DEFINITION (HARD RULE): LFY = the MOST RECENT COMPLETED fiscal year, period. Do NOT substitute an earlier "last comparable year" because of M&A, divestitures, discontinued operations, restatements, OR DELAYED ANNUAL FILINGS. If the most recent completed fiscal year was affected by a divestiture (e.g., APP's Apps business sold mid-2025 means FY2025 is reported on a continuing-ops basis), use the continuing-ops FY2025 figure as LFY — do not regress to FY2024. The trajectory across the trailing columns (prior FY → LFY → LTM) is itself how the report communicates a basis change; don't hide it by skipping a year.
+
+LATE ANNUAL FILINGS (especially foreign private issuers): foreign issuers often announce full-year results via press release / 6-K / earnings call MONTHS before the 20-F filing drops. The announced fiscal year is STILL LFY — anchor on "most recent completed fiscal year" not "most recent annual SEC filing." Example: as of May 2026, NetEase's FY2025 results were public via the February-2026 press release and Q4'25 earnings call, but the FY2025 20-F won't be filed until April-May. LFY is FY2025 — pull the numbers from the press release / 6-K / earnings call, NOT the still-most-recent FY2024 20-F. The NTES test run made this exact mistake (labelled FY2024 as LFY) — do not repeat it.
 
 For the SUBJECT company, gather:
 (a) Latest completed fiscal year (LFY) figures from filings: revenue, gross profit, operating income, net income, diluted EPS, EBITDA (or adj. EBITDA where reported), free cash flow.
@@ -692,6 +708,22 @@ def run_tool(tavily: TavilyClient, name: str, tool_input: dict) -> str:
 
 # ---------- Agent loop ----------
 
+def _log_loop_timing(loop_start: float, tool_stats: dict, tool_calls_used: int) -> None:
+    """Print a per-tool timing breakdown to stderr at the end of an agentic_loop run."""
+    total = time.monotonic() - loop_start
+    typer.echo(
+        f"\n[timing] total wall time: {total/60:.1f} min ({total:.0f}s); {tool_calls_used} tool calls",
+        err=True,
+    )
+    for name in sorted(tool_stats, key=lambda n: -tool_stats[n]["total_seconds"]):
+        s = tool_stats[name]
+        avg = s["total_seconds"] / max(s["count"], 1)
+        typer.echo(
+            f"[timing]   {name:14s}: {s['count']:3d} calls, {s['total_seconds']:6.1f}s total, {avg:5.1f}s avg",
+            err=True,
+        )
+
+
 def agentic_loop(
     client: OpenAI,
     tavily: TavilyClient,
@@ -701,9 +733,12 @@ def agentic_loop(
     verbose: bool,
 ) -> str:
     """Run the agentic tool-use loop until the model emits a final text response.
-    Returns the assembled output text."""
+    Returns the assembled output text. Per-tool timings are logged to stderr,
+    and a breakdown by tool name is printed at the end."""
     tool_calls_used = 0
     output_parts: list[str] = []
+    loop_start = time.monotonic()
+    tool_stats: dict = collections.defaultdict(lambda: {"count": 0, "total_seconds": 0.0})
 
     while True:
         stream = client.chat.completions.create(
@@ -753,14 +788,17 @@ def agentic_loop(
                 typer.echo(f"\n[note: stream connection dropped after completion — {type(e).__name__}]", err=True)
             else:
                 typer.echo(f"\n[stream error: {type(e).__name__}: {e}]", err=True)
+                _log_loop_timing(loop_start, tool_stats, tool_calls_used)
                 return "".join(output_parts)
 
         if finish_reason == "stop":
             sys.stdout.write("\n")
+            _log_loop_timing(loop_start, tool_stats, tool_calls_used)
             return "".join(output_parts)
 
         if finish_reason != "tool_calls":
             typer.echo(f"\n\n[stopped with reason: {finish_reason}]", err=True)
+            _log_loop_timing(loop_start, tool_stats, tool_calls_used)
             return "".join(output_parts)
 
         assistant_tool_calls = [
@@ -809,7 +847,16 @@ def agentic_loop(
                     err=True,
                 )
 
+            tool_start = time.monotonic()
             result = run_tool(tavily, tc["name"], tool_input)
+            tool_elapsed = time.monotonic() - tool_start
+            stats = tool_stats[tc["name"]]
+            stats["count"] += 1
+            stats["total_seconds"] += tool_elapsed
+            typer.echo(
+                f"[T+{time.monotonic() - loop_start:6.1f}s] tool#{tool_calls_used:>3d} {tc['name']:14s} took {tool_elapsed:5.1f}s",
+                err=True,
+            )
 
             if verbose:
                 # Truncate long results so the log stays readable; python_repl
