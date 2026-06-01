@@ -10,6 +10,3 @@ venv/
 *.egg-info/
 dist/
 build/
-
-# Local feature-planning doc, intentionally not tracked
-FEATURE_IDEAS.md
