@@ -77,10 +77,10 @@ report's "premium for what?" framing demands it.
 
 ---
 
-## Queued — speed / cost optimizations
+## Speed / cost optimizations
 
 Surfaced by the NTES test run (May 31, 2026 — **22.4 min total, 95 tool calls**, hit the budget cap).
-The timing instrumentation we added (commit `286d949`) reveals the cost breakdown:
+Timing instrumentation (commit `286d949`) revealed:
 
 | Component | Time | Share |
 |---|---|---|
@@ -88,47 +88,60 @@ The timing instrumentation we added (commit `286d949`) reveals the cost breakdow
 | Model thinking between tool calls | ~590s | **~44%** |
 | Phase 3 synthesis | ~636s | **~47%** |
 
-**The headline insight:** tool execution is NOT the bottleneck. Wins come from (a) reducing tool call
-count — which kills both tool time AND inter-batch model thinking, (b) tightening Phase 3 synthesis
-length — linear in output tokens. Aggressive within-turn parallelization buys very little.
+**Headline insight:** tool execution is NOT the bottleneck. Wins come from (a) reducing tool call
+count — kills tool time AND inter-batch model thinking, (b) tightening Phase 3 synthesis length —
+linear in output tokens. Aggressive within-turn parallelization buys very little.
 
-### S1. Pre-fetch predictable documents in parallel before Phase 1
-- **Problem:** Every `initiate` run burns 5-10 tool calls on the same predictable fetches: 10-K/20-F,
-  latest 10-Q/6-K, last 2 transcripts, Yahoo quote/financials/analysis for the subject.
-- **Change:** Before `agentic_loop` starts, fan out `asyncio` fetches for these known-needed docs and
-  inject them into the initial prompt as pre-gathered context. The model starts Phase 1 with the
-  foundational data already in hand.
-- **Estimated savings:** ~60-120s per run + cleaner prompt-cache invariant prefix.
-- **Effort:** ~2 hours.
+### ~~S1. Pre-fetch predictable documents in parallel before Phase 1~~ ✅ Shipped (commit `838e53b`, June 2, 2026)
+8 deterministic subject-company fetches (4 Yahoo URLs + 4 EDGAR form searches: 10-K, 20-F, 10-Q, 6-K)
+run via `ThreadPoolExecutor` before `agentic_loop` starts and inject as synthetic tool messages.
 
-### S2. Tighten Phase 1 search-attempt cap per data point
-- **Problem:** The model sometimes burns 3-5 searches chasing one number that isn't accessible.
-  NTES hit the 95-call cap largely from redundant searches against Chinese-source data.
-- **Change:** Prompt instruction: "after 2 unsuccessful attempts to find any specific number, mark it
-  'not disclosed' and move on." Concrete examples of what counts as an attempt vs. a productive search.
-- **Estimated savings:** ~3-5 min on hard cases (cuts inter-batch model thinking dramatically — every
-  avoided batch ≈ ~20s of model reasoning).
-- **Effort:** ~30 min prompt edit.
+**Measured impact (NTES re-test, June 2, 2026):** 8 calls in **3.4s wall** vs ~160s sequential
+in the loop — frees ~115s and 8 budget slots. Phase 1 in-loop reduced from ~10 min to ~8.4 min.
 
-### S3. Tighten section word caps in Phase 3 synthesis
-- **Problem:** Synthesis wall time is roughly linear in output tokens. We've kept adding sections
-  (Q&A Analysis, Forward Estimates, etc.) without enforcing per-section length discipline.
-  Current reports run ~20-24 KB; could be ~15-18 KB without losing analytical depth.
-- **Change:** Add explicit word caps to Business Overview, Market Opportunity, Competitive Landscape,
-  and each Investment Framework subsection. The Q&A section already has one (~500 words).
-- **Estimated savings:** ~1.5-2.5 min (cuts ~25% of synthesis time).
-- **Effort:** ~30 min for the prompt edits; iterating to find right caps without losing depth.
+### ~~S2. Tighten Phase 1 search-attempt cap per data point~~ ✅ Shipped (commit `26ce4ff`, June 2, 2026)
+Hard 2-attempt rule with concrete examples of what counts as an attempt; PRIMARY vs SECONDARY data
+tiering; explicit "mark NM and move on" rule for unreachable peers.
 
-### S4. Parallelize tool calls within an assistant turn
+**Measured impact:** NTES in-loop tool calls **77 vs 95 prior** (-19%). Model now correctly returns
+NM for hard-to-find data (e.g. short interest) after 2 attempts instead of burning 5+ searches.
+
+### ~~S3. Tighten section word caps in Phase 3 synthesis~~ ✅ Shipped (commit `26ce4ff`, June 2, 2026)
+Explicit word caps across Business Overview (~250), Market Opportunity (~180), Comp Landscape (~80),
+Historical Context (~120), Key Risks (5 risks × ~25-30 words), Bull/Bear/Base (~80-100 each).
+Q&A Analysis was already at ~500.
+
+**Measured impact:** Phase 3 synthesis **~4 min vs ~10.6 min prior** (-60%). Major win.
+
+### ~~S7. Code-side `python_repl` cap enforcement~~ ✅ Shipped (commit pending, June 2, 2026)
+- **Surfaced by:** the NTES re-test where the model ran **6 python_repl iterations** despite the
+  prompt's "AT MOST 3" rule — debugging its own code errors. Cost ~15 min on a 32-min run.
+- **Change:** `PHASE2_REPL_CAP = 3` constant; `agentic_loop` tracks `python_repl_calls_used` and
+  returns a "budget exhausted, write the report with what you have" tool message on call #4+
+  instead of executing. Prompt-only rules don't bite when the model thinks it has good cause; the
+  cap had to move to code, mirroring how `tool_calls_used >= max_tool_calls` is already enforced.
+
+### ~~S8. LFY column hardening (HARD CHECK in Financial Summary; LFY year stamp in Phase 2)~~ ✅ Shipped (commit pending, June 2, 2026)
+- **Surfaced by:** both NTES runs (May 31 and June 2) labelled FY2024 as LFY when actual LFY is
+  FY2025 — even though the FY2025 20-F was filed April 15, 2026 and cited in the report's own
+  Sources. The Phase 1 step 11 rule ("LFY = most recent COMPLETED fiscal year") wasn't biting at
+  the table-writing moment.
+- **Change:** (a) Phase 3 Financial Summary section now has an inline `LFY HARD CHECK` with a
+  worked example ("today is June 2026 → LFY = FY2025; showing FY2023 | FY2024 | LTM is WRONG").
+  (b) Phase 2 subject-compute list now requires the first python_repl call to print
+  `LFY = FYxxxx` based on today's date — anchors the year stamp in conversation before Phase 3
+  writes the table.
+
+### S4. Parallelize tool calls within an assistant turn — *queued*
 - **Problem:** When the model emits multiple `tool_calls` in one response (e.g., a batch of 3 peer
   fetches), `agentic_loop` runs them sequentially.
 - **Change:** Use `asyncio.gather` over the tool_calls list. Combine with a prompt nudge to batch
   ("when gathering peer data, emit all peer fetches in a single response").
 - **Estimated savings:** modest — **~10-30s**. The model doesn't always batch, and tool execution
-  is only ~9% of total wall time. Higher-leverage items above first.
+  is only ~9% of total wall time. Higher-leverage items above already shipped.
 - **Effort:** ~2 hours (async refactor of the tool-execution loop).
 
-### S5. Disk cache for SEC filings (TTL 90 days)
+### S5. Disk cache for SEC filings (TTL 90 days) — *queued*
 - **Problem:** SEC filing content doesn't change. Repeat-ticker runs re-fetch identical documents.
 - **Change:** Simple disk cache keyed by URL with 90-day TTL on `edgar_fetch` and the relevant
   `fetch_url` paths to SEC.gov / EDGAR.
@@ -145,6 +158,19 @@ length — linear in output tokens. Aggressive within-turn parallelization buys 
   the NTES-class workload).
 - **Effort:** significant — needs the library refactor planned in `WECHAT_MINIAPP_PLAN.md`.
 - **Defer until** the hosted-backend architecture lands.
+
+### NTES re-test outcome (June 2, 2026) — what we measured
+
+S1 + S2 + S3 all worked as designed. Phase 1 was ~1.5 min faster (S1 + S2); Phase 3 was ~6.5 min
+faster (S3). The combined wins would have produced a **~17-18 min total** — squarely in the target
+band of 13-17 min.
+
+But the run hit **32.1 min** because of a Phase 2 regression: the model iterated `python_repl` 6
+times (cap is 3), debugging its own code errors. That ate ~15 min. S7 (code-side enforcement) fixes
+this directly. S8 fixes the LFY off-by-one that repeated in this run despite the `286d949` prompt
+tightening.
+
+Next NTES re-test (post S7 + S8) should land in the 17-18 min range with the correct LFY year stamp.
 
 ---
 

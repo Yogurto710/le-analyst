@@ -32,6 +32,7 @@ MODEL = "kimi-k2.6"
 BASE_URL = "https://api.moonshot.cn/v1"
 RESEARCH_MAX_TOOL_CALLS = 30
 INITIATE_MAX_TOOL_CALLS = 95  # +10 vs original: +5 for subject consensus, +5 for per-peer consensus that powers the forward peer comp table
+PHASE2_REPL_CAP = 3  # python_repl calls per initiate run; enforced in agentic_loop so the model can't iterate past it
 FETCH_CHAR_LIMIT = 10000  # default for news/Yahoo/blogs (mostly nav cruft after trafilatura strip)
 TRANSCRIPT_FETCH_CHAR_LIMIT = 50000  # earnings calls — Q&A often holds the highest-impact content
 EDGAR_FETCH_CHAR_LIMIT = 40000  # 10-K sections can be very long; allow more
@@ -153,6 +154,7 @@ PHASE 2 — Compute derived metrics (use ONLY python_repl)
 Once Phase 1 is complete, use python_repl AT MOST 3 TIMES TOTAL to compute every derived metric below. Bundle all related computations into one block. Print every value cleanly so you can quote it in the report. If an input is missing from Phase 1, print "NM" or "N/A" — do not return to Phase 1 to fetch it.
 
 For the subject company:
+- **First python_repl call must declare the LFY year stamp.** Print `LFY = FYxxxx` based on today's date and the company's fiscal year-end. For a calendar-FY company in June 2026, that's `LFY = FY2025`. This is a discipline anchor for the Phase 3 Financial Summary table — the LFY column MUST match this year, even if the audited 20-F / 10-K for that year hasn't dropped yet (use press-release / 6-K numbers when needed). Foreign-private-issuer 20-F delays do NOT change the LFY year.
 - Revenue YoY growth
 - Bookings YoY growth (if applicable)
 - DAU YoY growth (if applicable)
@@ -218,7 +220,11 @@ Brief prose intro that frames the company's TRAJECTORY — not just the last fis
 Numbers in the Financial Summary come from filings (prior FY, LFY) and Yahoo Finance's TTM column (LTM); Forward Estimates come from Wall Street consensus and management guidance, both gathered in Phase 1.
 
 ### Financial Summary
-A trailing-only markdown table — clean, no blanks. Columns, left to right: prior fiscal year | latest fiscal year (LFY) | LTM. Required rows: Revenue, Gross Profit (or Gross Margin %), Operating Income/Loss, Net Income/Loss, Adjusted EBITDA (if reported), Free Cash Flow, Diluted EPS. Add a YoY change column if helpful, but the LFY-vs-LTM column already conveys trajectory. Historical columns (prior FY, LFY) come from filings; the LTM column comes from Yahoo Finance's TTM, verified against the Phase 2 LTM revenue cross-check — if the cross-check failed, use the filing-derived LTM and footnote the source. If the company reports segments, include a Revenue by Segment block (one row per segment) within or immediately below this table. Format dollar values consistently (e.g. all $M or all $B).
+A trailing-only markdown table — clean, no blanks. Columns, left to right: prior fiscal year | latest fiscal year (LFY) | LTM.
+
+**LFY HARD CHECK** (the model has repeatedly violated this — read carefully): LFY = the most recent COMPLETED fiscal year, per the Phase 1 step 11 rule. For a calendar-FY company, if today is on or after February of year N+1, **LFY = FY-N**. Example: today is June 2026, calendar FY-end company → LFY = **FY2025**. This is true **regardless of whether the FY2025 annual filing (10-K / 20-F) has dropped**. If FY2025 numbers are only available via press release / 6-K / earnings call, USE THOSE for the LFY column and footnote the source (e.g. "FY2025 from Q4'25 press release; 20-F not yet filed"). The prior-FY column is then FY2024. Showing `FY2023 | FY2024 | LTM` and skipping FY2025 is **WRONG** — even if FY2024 is the latest year you have a full audited filing for. The NTES test runs have made this exact mistake twice; do not repeat it.
+
+Required rows: Revenue, Gross Profit (or Gross Margin %), Operating Income/Loss, Net Income/Loss, Adjusted EBITDA (if reported), Free Cash Flow, Diluted EPS. Add a YoY change column if helpful, but the LFY-vs-LTM column already conveys trajectory. Historical columns (prior FY, LFY) come from filings, press releases, or 6-K interim reports — whichever has the most recent numbers for that fiscal year; the LTM column comes from Yahoo Finance's TTM, verified against the Phase 2 LTM revenue cross-check (if the cross-check failed, use the filing-derived LTM and footnote the source). If the company reports segments, include a Revenue by Segment block (one row per segment) within or immediately below this table. Format dollar values consistently (e.g. all $M or all $B).
 
 ### Forward Estimates
 This section has TWO parts — consensus, then management guidance — and ends with a one-line gap commentary. This is the dedicated home for forward operating expectations; do not duplicate these figures in the Financial Summary or in Forward Context (which uses them downstream to compute multiples).
@@ -844,6 +850,7 @@ def agentic_loop(
     Returns the assembled output text. Per-tool timings are logged to stderr,
     and a breakdown by tool name is printed at the end."""
     tool_calls_used = 0
+    python_repl_calls_used = 0  # tracked separately for the Phase 2 hard cap (see PHASE2_REPL_CAP)
     output_parts: list[str] = []
     loop_start = time.monotonic()
     tool_stats: dict = collections.defaultdict(lambda: {"count": 0, "total_seconds": 0.0})
@@ -954,6 +961,30 @@ def agentic_loop(
                     f"\n[tool #{tool_calls_used}] {tc['name']}({json.dumps(tool_input)})",
                     err=True,
                 )
+
+            # Hard cap on Phase 2 python_repl iteration. Without this, the model
+            # debugs its own code errors indefinitely — the prompt's "AT MOST 3"
+            # is just a hint. See NTES re-test (June 2, 2026) where the model
+            # ran 6 python_repl iterations, eating ~15 min on code-error rework.
+            if tc["name"] == "python_repl" and python_repl_calls_used >= PHASE2_REPL_CAP:
+                cap_msg = (
+                    f"Phase 2 python_repl budget exhausted ({PHASE2_REPL_CAP} calls already used). "
+                    "Do NOT call python_repl again — additional calls will return this same message. "
+                    "Proceed directly to Phase 3 (synthesis) and write the report with the data you "
+                    "already have. If a metric came out wrong in an earlier python_repl call, footnote "
+                    "the issue in the Open Questions section — do not iterate further."
+                )
+                typer.echo(
+                    f"[T+{time.monotonic() - loop_start:6.1f}s] tool#{tool_calls_used:>3d} python_repl    CAPPED (>= {PHASE2_REPL_CAP} prior calls)",
+                    err=True,
+                )
+                messages.append(
+                    {"role": "tool", "tool_call_id": tc["id"], "content": cap_msg}
+                )
+                continue
+
+            if tc["name"] == "python_repl":
+                python_repl_calls_used += 1
 
             tool_start = time.monotonic()
             result = run_tool(tavily, tc["name"], tool_input)
