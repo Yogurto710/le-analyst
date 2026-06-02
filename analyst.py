@@ -130,7 +130,19 @@ For the SUBJECT company, gather:
 Note where the subject's LFY and LTM revenue materially differ — this drives the Quality-of-Earnings flag in Phase 3.
 12. CYCLICAL-INDUSTRY DATA — gather this ONLY if the subject operates in an industry with well-documented boom-bust cycles (memory/commodity semiconductors, commodity chemicals, shipping, energy, mining, and the like). Skip this item entirely for companies where cyclicality is not the primary analytical lens (e.g. Netflix, Roblox). When it applies, gather: (a) historical cycle duration for this industry (how many quarters past upcycles and downcycles have lasted); (b) 3-4 leading indicators of a cycle turn for this specific industry (e.g. inventory days, spot-vs-contract price spread, fab/plant utilization, book-to-bill, freight day-rates, rig counts) — for each, the current reading AND the historical level that has signalled prior turns; and (c) the subject company's CapEx and depreciation & amortization for the latest fiscal year (plus a couple of prior years if readily available) to support a supply-side CapEx/Depreciation ratio.
 
-PHASE 1 BUDGET DISCIPLINE: Aim to finish gathering in under 65 tool calls. If you find yourself unable to locate a specific number after 2-3 search attempts, stop searching for it — note it as missing and move on. Missing data goes to Open Questions; it does not justify more searches.
+PHASE 1 BUDGET DISCIPLINE: Aim to finish gathering in under 65 tool calls. Hard cap is 95.
+
+HARD STOP RULE — 2 attempts per data point: after TWO unsuccessful web_search + fetch_url tries for any specific number, STOP and move on. Mark the data point as "not disclosed" or "not publicly available" and add it to Open Questions. Do NOT try a third query with different phrasing, a different source, or a different language. The NTES test run hit the 95-call cap largely from burning 3-5 searches each on hard-to-find Chinese-source numbers — every redundant search cost ~20 seconds of wall time including model thinking.
+
+What counts as an "attempt": any web_search or fetch_url targeting the SAME specific number (e.g., "Tencent gaming revenue 2025" and "Tencent online games revenue FY25" are two attempts at the same data point). Different data points are independent budgets — gathering "Tencent revenue" and "Tencent EPS" do not share an attempt count.
+
+What does NOT count as an attempt: confirming a number you already have against an authoritative second source (verification, not search). Fetching the next required document in your gathering plan (executing the plan, not searching).
+
+Triage by criticality:
+- PRIMARY data (must find — escalate to a third attempt only if missing would block a section): subject company's headline revenue / EPS / margins, current price / market cap, primary 10-K or 20-F filing.
+- SECONDARY data (acceptable to miss after 2 attempts): peer detail beyond Yahoo / stockanalysis baseline, granular segment splits, historical trough multiples, specific transcript quotes. These go to Open Questions if not found.
+
+When a peer is unreachable from the chosen source after 2 attempts, mark its row "NM" across the affected columns and move on — better to ship a comp table with one peer thin than burn 10 searches getting that peer to parity. The median-row HARD RULE (<3 valid non-NM values → "—") handles thinness gracefully.
 
 ==============================================================
 PHASE 2 — Compute derived metrics (use ONLY python_repl)
@@ -196,7 +208,7 @@ Output format:
 A single-row markdown table with columns: Price | Mkt Cap | 52W Range | Avg Daily Volume | Short Interest | EV/Rev (trailing) | EV/Rev (Fwd) | EPS (LTM, dil.) | EPS (Fwd, cons.) | P/E (LTM) | P/E (Fwd). Use the Yahoo Finance data from Phase 1 and the figures computed in Phase 2. The trailing EV/Rev column header MUST name the revenue basis it uses — write "EV/Rev (LTM)" or "EV/Rev (FY2025)", not a bare "EV/Rev" — and use the SAME basis as the Peer Comp Table; if they must differ, label each and add a one-line note. Forward EPS and P/E (Fwd) use Wall Street consensus from Phase 1, not guidance. Format: price and EPS as $XX.XX, market cap as $X.XB, 52W range as $low – $high, avg daily volume as X.XM, short interest as X.X%, multiples as X.Xx. Show "NM" for any P/E whose EPS is negative or zero. Show "—" where a forward figure has no consensus (and no guidance). Below the table add a single italicized line: *Data as of [today's date]; forward figures are Wall Street consensus ([N] analysts, [source], [date]).*
 
 ## Business Overview
-What the company does, revenue model, segment breakdown, key operating metrics management tracks, and the company's CURRENT strategic priorities (1-2 sentences distilled from the most recent investor day, earnings letter, or shareholder letter — what management says it's investing in and executing against right now). Cite the 10-K Item 1 plus the relevant earnings call or letter for the strategy framing. Numbers and forward guidance do not belong here — they live in Financial Profile / Forward Estimates.
+What the company does, revenue model, segment breakdown, key operating metrics management tracks, and the company's CURRENT strategic priorities (1-2 sentences distilled from the most recent investor day, earnings letter, or shareholder letter — what management says it's investing in and executing against right now). Cite the 10-K Item 1 plus the relevant earnings call or letter for the strategy framing. Numbers and forward guidance do not belong here — they live in Financial Profile / Forward Estimates. **Cap: ~250 words.** This section is contextual orientation, not the analytical core.
 
 ## Financial Profile
 Brief prose intro that frames the company's TRAJECTORY — not just the last fiscal year, but where it sits now (LTM) and where the Street expects it to go. Lead with the takeaways that matter most. Include a one-line balance-sheet callout in this intro paragraph: "Net cash of $X.XB on $X.XB cash and equivalents and $X.XB total debt as of [most recent period end]" (or "Net debt of $X.XB" when negative). Do not give the balance sheet its own table — that single sentence is the whole treatment.
@@ -252,11 +264,11 @@ Tone discipline:
 - Do not introduce information that wasn't in the Q&A. Strategic context belongs in Business Overview; forward guidance belongs in Forward Estimates.
 
 ## Market Opportunity
-Begin with the company's own TAM claim. Then present at least one independent third-party TAM estimate. If the figures diverge, explain likely reasons (different scope, adjacent markets, methodology). Compute and show the company's implied current market share against each TAM estimate. End with a one-sentence note on TAM methodology limitations for this industry.
+Begin with the company's own TAM claim. Then present at least one independent third-party TAM estimate. If the figures diverge, explain likely reasons (different scope, adjacent markets, methodology). Compute and show the company's implied current market share against each TAM estimate. End with a one-sentence note on TAM methodology limitations for this industry. **Cap: ~180 words.**
 
 ## Competitive Landscape
 Two parts:
-(a) **Stated position**: How the company describes its competitive position (10-K Item 1 + recent commentary).
+(a) **Stated position** (~80 words): How the company describes its competitive position (10-K Item 1 + recent commentary).
 (b) **Independent evidence**: A markdown table with one row per named competitor. Columns: Competitor | Scale Evidence | Assessment.
 
 Hard rules for the table:
@@ -293,16 +305,16 @@ This subsection applies the consensus figures already presented in **Forward Est
 Compute via python_repl, for BOTH FY+1 and FY+2: forward EV/Revenue, forward EV/EBITDA (where consensus EBITDA exists), and forward P/E. Show the inputs alongside each multiple (the consensus figure plus current EV or price). Every forward figure must pass the Phase 2 sanity checks — forward EBITDA stays below implied forward gross profit, the margin ordering holds, and every forward multiple reconciles to the figures shown alongside it. Add one sentence on how forward multiples compare to trailing — analysts shouldn't be working off stale numbers when newer ones are available. If neither consensus nor guidance is available (the rare case flagged in Forward Estimates), write "No forward consensus or guidance available; trailing multiples above are the latest." and skip the multiples block.
 
 ### Historical Context
-Concrete data points on where the current multiple sits versus history. Cite peak multiple and date, trough multiple and date, and current multiple. If exact multiples are unavailable, approximate from stock prices at those dates and contemporaneous revenue figures, and flag the approximation.
+Concrete data points on where the current multiple sits versus history. Cite peak multiple and date, trough multiple and date, and current multiple. If exact multiples are unavailable, approximate from stock prices at those dates and contemporaneous revenue figures, and flag the approximation. **Cap: ~120 words.**
 
 ## Key Risks
-From 10-K Item 1A plus any emerging risks raised on recent earnings calls.
+From 10-K Item 1A plus any emerging risks raised on recent earnings calls. **Cap at 5 risks max; each risk is one sentence (~25-30 words) — bold title + concise risk statement.** Do not pad with generic industry concerns or repeat what's already in Quality-of-Earnings Notes; this section is for the material, observable risks an analyst needs to weight in the Bear Case.
 
 ## Investment Framework
 Write this section LAST, after every other section above is complete. Read back through the prior sections before drafting — this is the synthesis layer that turns the report into a thinking tool. Three subsections:
 
 ### Bull / Bear / Base Cases
-Three short paragraphs of 3-5 sentences each. Each follows the structure: thesis → supporting evidence with citations from elsewhere in this report → confirmation/invalidation trigger.
+Three short paragraphs of **3-4 sentences each (~80-100 words per case, ~250-300 words total)**. Each follows the structure: thesis → supporting evidence with citations from elsewhere in this report → confirmation/invalidation trigger.
 
 **Bull Case** — identify the 2-3 strongest positive signals from the report. Reference specific metrics with citations. State what the analyst should watch over what timeframe to confirm: "The bull case is confirmed if [metric] does [X] over [timeframe]." Express upside as a multiple range, not a price target: "If [condition], the multiple could re-rate from current Xx toward Yx (peer or historical reference), implying [range]% upside."
 
