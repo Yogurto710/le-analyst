@@ -85,6 +85,8 @@ Your process has three STRICTLY SEQUENTIAL phases. You must complete each phase 
 PHASE 1 — Gather all primary and peer data (use only edgar_search, edgar_fetch, web_search, fetch_url)
 ==============================================================
 
+STARTING CONTEXT (already in your conversation): a pre-fetch round runs BEFORE this phase. It has parallel-fetched the deterministic subject-company foundations: edgar_search results for forms 10-K, 20-F, 10-Q, and 6-K (covering both US-domestic and foreign-private-issuer schemas), AND Yahoo Finance's quote / key-statistics / financials / analysis pages for the subject. These appear in your context as if you had called them. Do NOT re-call edgar_search for those four form types, and do NOT re-fetch those Yahoo pages for the subject company — the data is already in hand. Proceed directly to: (a) edgar_fetch on the relevant annual + quarterly filing URLs you can read out of the pre-fetched edgar_search results, and (b) the rest of Phase 1 below (transcripts, peer data, TAM, catalysts, consensus, fiscal calendar checks).
+
 1. Use edgar_search to locate the most recent 10-K and 10-Q filings for the ticker. Then use edgar_fetch to read Item 1 (Business), Item 1A (Risk Factors), and Item 7 (MD&A) from the 10-K, and the MD&A section of the latest 10-Q.
 
    FOREIGN PRIVATE ISSUERS (China ADRs like NTES / BABA / JD, EU companies, etc.): the equivalent SEC filings are Form 20-F (annual) and Form 6-K (interim, irregular timing). The 20-F item numbering differs from 10-K — read Item 4 (Information on the Company, ≈ 10-K Item 1), Item 3.D (Risk Factors, ≈ 10-K Item 1A), and Item 5 (Operating and Financial Review, ≈ 10-K Item 7 / MD&A). If edgar_search returns no 10-K for a US-listed foreign ticker, search for 20-F instead. Quarterly results for foreign issuers come via 6-K (or via press release captured separately) — they do not file 10-Qs.
@@ -720,6 +722,100 @@ def run_tool(tavily: TavilyClient, name: str, tool_input: dict) -> str:
 
 # ---------- Agent loop ----------
 
+def _prefetch_subject_docs(ticker: str) -> list[dict]:
+    """Pre-fetch the subject company's predictable foundational documents in
+    parallel before Phase 1 starts. Returns a list of synthetic messages
+    (one assistant + N tool results) to inject into the conversation so the
+    model starts Phase 1 with these docs already in context.
+
+    The deterministic prerequisites (Yahoo Finance pages + EDGAR submissions
+    searches for the standard form types) are the same for every initiation
+    report. Running them sequentially inside the agent loop costs ~20s/call
+    of inter-batch model thinking time; running them in parallel up front
+    costs ~3-5s wall and gives the model the data immediately.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    ticker_u = ticker.upper()
+    tasks = [
+        ("fetch_url",    {"url": f"https://finance.yahoo.com/quote/{ticker_u}/"}),
+        ("fetch_url",    {"url": f"https://finance.yahoo.com/quote/{ticker_u}/key-statistics/"}),
+        ("fetch_url",    {"url": f"https://finance.yahoo.com/quote/{ticker_u}/financials/"}),
+        ("fetch_url",    {"url": f"https://finance.yahoo.com/quote/{ticker_u}/analysis/"}),
+        ("edgar_search", {"ticker": ticker_u, "form_type": "10-K"}),
+        ("edgar_search", {"ticker": ticker_u, "form_type": "20-F"}),
+        ("edgar_search", {"ticker": ticker_u, "form_type": "10-Q"}),
+        ("edgar_search", {"ticker": ticker_u, "form_type": "6-K"}),
+    ]
+
+    typer.echo(
+        f"[prefetch] fanning out {len(tasks)} predictable subject-company fetches in parallel...",
+        err=True,
+    )
+    start = time.monotonic()
+
+    def _run_one(task: tuple[str, dict]):
+        tool_name, tool_args = task
+        t0 = time.monotonic()
+        try:
+            if tool_name == "fetch_url":
+                r = tool_fetch_url(tool_args["url"])
+            elif tool_name == "edgar_search":
+                r = tool_edgar_search(tool_args["ticker"], tool_args["form_type"])
+            else:
+                r = f"unknown prefetch tool: {tool_name}"
+        except Exception as e:
+            r = f"prefetch error ({type(e).__name__}): {e}"
+        return tool_name, tool_args, r, time.monotonic() - t0
+
+    with ThreadPoolExecutor(max_workers=len(tasks)) as ex:
+        results = list(ex.map(_run_one, tasks))
+
+    elapsed = time.monotonic() - start
+
+    for tool_name, tool_args, _, t in results:
+        if tool_name == "fetch_url":
+            short = tool_args["url"].split("/quote/", 1)[-1].strip("/") or "quote"
+        else:
+            short = f"form={tool_args.get('form_type','?')}"
+        typer.echo(f"[prefetch]   {tool_name:14s} {short:30s} took {t:.1f}s", err=True)
+    typer.echo(
+        f"[prefetch] done in {elapsed:.1f}s wall (vs ~{len(tasks) * 20}s if requested sequentially in the agent loop)",
+        err=True,
+    )
+
+    # Build the synthetic assistant + tool messages
+    tc_meta = []
+    tool_msgs: list[dict] = []
+    for i, (tool_name, tool_args, result, _) in enumerate(results):
+        tc_id = f"prefetch_{i:02d}"
+        tc_meta.append({
+            "id": tc_id,
+            "type": "function",
+            "function": {"name": tool_name, "arguments": json.dumps(tool_args)},
+        })
+        tool_msgs.append({
+            "role": "tool",
+            "tool_call_id": tc_id,
+            "content": result,
+        })
+
+    assistant_msg = {
+        "role": "assistant",
+        "content": (
+            "Starting by pre-fetching the foundational documents for this ticker in parallel: "
+            "EDGAR submissions searches for forms 10-K, 20-F, 10-Q, and 6-K (covering both "
+            "US-domestic and foreign-private-issuer schemas), plus Yahoo Finance "
+            "quote / key-statistics / financials / analysis pages for the subject company. "
+            "These are deterministic prerequisites for any initiation report; the rest of Phase 1 "
+            "will focus on peer data, transcripts, TAM, catalysts, and Wall Street consensus."
+        ),
+        "tool_calls": tc_meta,
+    }
+
+    return [assistant_msg] + tool_msgs
+
+
 def _log_loop_timing(loop_start: float, tool_stats: dict, tool_calls_used: int) -> None:
     """Print a per-tool timing breakdown to stderr at the end of an agentic_loop run."""
     total = time.monotonic() - loop_start
@@ -1130,6 +1226,11 @@ def initiate(
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Ticker: {ticker}\n\nProduce an initiation report following the format above."},
     ]
+
+    # Pre-fetch the deterministic subject-company foundations in parallel before
+    # the agent loop. Saves ~7 batches of inter-batch model thinking (~120-140s)
+    # at the cost of ~3-5s wall on the parallel fetch. See _prefetch_subject_docs.
+    messages.extend(_prefetch_subject_docs(ticker))
 
     output = agentic_loop(
         client, tavily, messages, INITIATE_TOOLS, INITIATE_MAX_TOOL_CALLS, verbose
