@@ -1014,6 +1014,440 @@ def agentic_loop(
             )
 
 
+# ---------- Phase 4: code-side review + targeted revision ----------
+#
+# After Phase 3 produces a draft, run deterministic checks (C1-C6) against the
+# markdown. If any fire, ask the model for a TARGETED revision that fixes only
+# the listed findings — not a full rewrite. Saves the revised version.
+# Cost: $0 when no findings, ~$0.20 + 3-5 min when findings exist.
+
+
+def _section_text(draft: str, name: str, level: int = 2) -> str:
+    """Return the text of a `{level}` markdown section by its heading text.
+    Slice from the heading to the next same-level heading or EOF."""
+    hashes = "#" * level
+    pattern = rf"^{hashes}\s+{re.escape(name)}.*?(?=^{hashes}\s|\Z)"
+    m = re.search(pattern, draft, re.MULTILINE | re.DOTALL)
+    return m.group(0) if m else ""
+
+
+def _check_c1_lfy(draft: str, today: datetime.date) -> dict | None:
+    """C1 — LFY column year in Financial Summary. Most LFY-bug cases produce
+    `FY{today.year - 2}` in the latest-historical slot when the right answer is
+    `FY{today.year - 1}` (or close to it for non-calendar FY companies)."""
+    fp = _section_text(draft, "Financial Profile")
+    fs_match = re.search(r"###\s+Financial Summary.*?\n(\|[^\n]+\|)", fp, re.DOTALL)
+    if not fs_match:
+        return None
+    header = fs_match.group(1)
+    fy_years = [int(m.group(1)) for m in re.finditer(r"FY\s*(\d{4})", header)]
+    if not fy_years:
+        return None
+    lfy_year = max(fy_years)
+    expected_min = today.year - 1
+    if lfy_year < expected_min:
+        return {
+            "check_id": "C1",
+            "severity": "HIGH",
+            "fix": (
+                f"Financial Summary LFY column shows FY{lfy_year}; expected at least "
+                f"FY{expected_min} based on today's date ({today.isoformat()}). The most "
+                f"recent COMPLETED fiscal year for a calendar-FY company is FY{expected_min} "
+                f"(and for non-calendar companies the latest completed FY is almost always "
+                f"FY{expected_min} as well by mid-{today.year}). MOVE FY{expected_min} numbers "
+                f"into the LFY column — pull them from the press release / 6-K / earnings "
+                f"call if the annual 10-K/20-F hasn't been filed yet — and SHIFT the prior-FY "
+                f"column to FY{expected_min - 1}. The intro paragraph and Quality-of-Earnings "
+                f"notes likely already cite the FY{expected_min} figures; use those."
+            ),
+        }
+    return None
+
+
+_NUM_RE = re.compile(r"^([-–]?)\$?([\d.,]+)([BMK]?)")
+
+
+def _parse_dollar_signed(s: str) -> float | None:
+    """Parse `$1.57`, `-$1.57`, `–$1.57`, `$3.2B`, etc. Returns signed float in raw units."""
+    s = s.strip().replace(",", "")
+    if "NM" in s or not s:
+        return None
+    m = _NUM_RE.match(s)
+    if not m:
+        return None
+    sign = -1 if m.group(1) in ("-", "–") else 1
+    val = float(m.group(2))
+    mult = {"B": 1e9, "M": 1e6, "K": 1e3, "": 1.0}[m.group(3)]
+    return sign * val * mult
+
+
+def _parse_multiple(s: str) -> float | None:
+    """Parse `13.3x`, `13.3x (FY+1E)`, etc. Returns float or None for NM."""
+    s = s.strip()
+    if "NM" in s or not s:
+        return None
+    m = re.match(r"^([\d.]+)x", s)
+    return float(m.group(1)) if m else None
+
+
+def _check_c2_snapshot_recon(draft: str) -> list[dict]:
+    """C2 — Trading Snapshot reconciliation. Verifies price/EPS arithmetic
+    against the printed P/E, and NM consistency between EPS and P/E columns."""
+    ts = _section_text(draft, "Trading Snapshot")
+    if not ts:
+        return []
+    rows = [ln for ln in ts.splitlines() if ln.lstrip().startswith("|") and "---" not in ln]
+    if len(rows) < 2:
+        return []
+    cells = [c.strip() for c in rows[1].strip("|").split("|")]
+    # Snapshot column order: Price | Mkt Cap | 52W Range | Vol | Short Int |
+    # EV/Rev (LTM) | EV/Rev (Fwd) | EPS (LTM) | EPS (Fwd) | P/E (LTM) | P/E (Fwd)
+    if len(cells) < 11:
+        return []
+    price = _parse_dollar_signed(cells[0])
+    eps_ltm = _parse_dollar_signed(cells[7])
+    eps_fwd = _parse_dollar_signed(cells[8])
+    pe_ltm = _parse_multiple(cells[9])
+    pe_fwd = _parse_multiple(cells[10])
+
+    findings = []
+    # LTM reconciliation
+    if price and eps_ltm and eps_ltm > 0 and pe_ltm:
+        expected = price / eps_ltm
+        if abs(expected - pe_ltm) / pe_ltm > 0.03:  # >3% off → flag
+            findings.append({
+                "check_id": "C2",
+                "severity": "MEDIUM",
+                "fix": (
+                    f"Trading Snapshot P/E (LTM) printed as {pe_ltm:.1f}x but "
+                    f"${price:.2f} ÷ ${eps_ltm:.2f} = {expected:.1f}x. Recompute and "
+                    f"reconcile — either correct the P/E or correct the EPS."
+                ),
+            })
+    # Fwd reconciliation
+    if price and eps_fwd and eps_fwd > 0 and pe_fwd:
+        expected = price / eps_fwd
+        if abs(expected - pe_fwd) / pe_fwd > 0.03:
+            findings.append({
+                "check_id": "C2",
+                "severity": "MEDIUM",
+                "fix": (
+                    f"Trading Snapshot P/E (Fwd) printed as {pe_fwd:.1f}x but "
+                    f"${price:.2f} ÷ ${eps_fwd:.2f} = {expected:.1f}x. Recompute and "
+                    f"reconcile — either correct the P/E or correct the forward EPS."
+                ),
+            })
+    # NM consistency: negative LTM EPS but non-NM P/E (LTM)
+    if eps_ltm is not None and eps_ltm <= 0 and "NM" not in cells[9]:
+        findings.append({
+            "check_id": "C2",
+            "severity": "MEDIUM",
+            "fix": (
+                f"Trading Snapshot EPS (LTM) is {cells[7]} (non-positive) but "
+                f"P/E (LTM) shows {cells[9]} — should be NM when EPS is non-positive."
+            ),
+        })
+    return findings
+
+
+def _check_c3_peer_median(draft: str) -> list[dict]:
+    """C3 — Peer Comp Table median row: a column with <3 valid (non-NM) peer
+    values must show `—` in the median cell, not an average of 2 values."""
+    pct = re.search(
+        r"###\s+Peer Comp Table.*?\n(\|[^\n]+\|)\n\|[\s\-:|]+\|\n((?:\|[^\n]+\|\n?)+)",
+        draft,
+        re.DOTALL,
+    )
+    if not pct:
+        return []
+    header_line = pct.group(1)
+    body = pct.group(2)
+    body_rows = [r for r in body.splitlines() if r.lstrip().startswith("|")]
+    if len(body_rows) < 3:  # need at least subject + 1 peer + median
+        return []
+
+    parsed = []
+    for r in body_rows:
+        cells = [c.strip() for c in r.strip("|").split("|")]
+        parsed.append(cells)
+
+    # Find median row (last row containing "median")
+    median_idx = None
+    for i, row in enumerate(parsed):
+        if any("median" in (c or "").lower() for c in row):
+            median_idx = i
+            break
+    if median_idx is None:
+        return []
+
+    median_row = parsed[median_idx]
+    # Subject is the first row; peers are rows 1..median_idx-1
+    peer_rows = parsed[1:median_idx]
+    if len(peer_rows) == 0:
+        return []
+
+    header_cells = [c.strip() for c in header_line.strip("|").split("|")]
+    findings = []
+    # Skip the first 3 columns (Company, EV, Rev) — not medianed normally
+    for col in range(3, len(median_row)):
+        median_cell = median_row[col]
+        peer_cells = [(p[col] if col < len(p) else "") for p in peer_rows]
+        valid = sum(
+            1 for c in peer_cells
+            if c and c not in ("NM", "—", "-", "") and re.search(r"\d", c)
+        )
+        is_blank = median_cell.strip("* ") in ("—", "-", "", "NM")
+        if valid < 3 and not is_blank:
+            col_name = header_cells[col] if col < len(header_cells) else f"column {col}"
+            findings.append({
+                "check_id": "C3",
+                "severity": "MEDIUM",
+                "fix": (
+                    f"Peer Comp Table column \"{col_name}\" has only {valid} valid "
+                    f"(non-NM) peer value(s) across {len(peer_rows)} peers, but the Median "
+                    f"cell shows \"{median_cell}\" — HARD RULE requires \"—\" when fewer "
+                    f"than 3 valid values exist. Replace with \"—\" and add or extend the "
+                    f"\"insufficient peer coverage\" footnote to name this column."
+                ),
+            })
+    return findings
+
+
+def _check_c4_lens(draft: str) -> dict | None:
+    """C4 — Forward valuation lens matches LTM profitability. Loss-making
+    (negative/NM LTM EPS) → lead with forward EV/Revenue. Comfortably profitable
+    → lead with forward P/E."""
+    ts = _section_text(draft, "Trading Snapshot")
+    if not ts:
+        return None
+    rows = [ln for ln in ts.splitlines() if ln.lstrip().startswith("|") and "---" not in ln]
+    if len(rows) < 2:
+        return None
+    cells = [c.strip() for c in rows[1].strip("|").split("|")]
+    if len(cells) < 11:
+        return None
+    eps_ltm_cell = cells[7]
+    is_negative = eps_ltm_cell.startswith("-") or eps_ltm_cell.startswith("–")
+    is_nm = "NM" in eps_ltm_cell
+    is_loss_making = is_negative or is_nm
+
+    vc = _section_text(draft, "Valuation Context")
+    if not vc:
+        return None
+    # Take the first 2KB as "lead" — opening framing
+    lead = vc[:2000].lower()
+    leads_pe = "forward p/e" in lead
+    leads_evrev = "forward ev/revenue" in lead or "forward ev/rev" in lead
+    leads_evebitda = "forward ev/ebitda" in lead
+
+    # Mismatch: loss-making but leads with P/E only (no EV/Rev or EV/EBITDA)
+    if is_loss_making and leads_pe and not (leads_evrev or leads_evebitda):
+        return {
+            "check_id": "C4",
+            "severity": "HIGH",
+            "fix": (
+                "Valuation Context leads with forward P/E but LTM EPS is non-positive "
+                f"({eps_ltm_cell}). Per the Phase 3 rule, loss-making / marginally-profitable "
+                "companies should lead with forward EV/Revenue (or forward EV/EBITDA where "
+                "EBITDA is the cleaner industry metric). Re-open Valuation Context with "
+                "FY+1E and FY+2E forward EV/Revenue framing and position vs the peer median; "
+                "demote the forward P/E discussion to a secondary lens."
+            ),
+        }
+    return None
+
+
+def _check_c5_sections(draft: str) -> list[dict]:
+    """C5 — required H2 sections all present in the order they should appear."""
+    required = [
+        "Trading Snapshot",
+        "Business Overview",
+        "Financial Profile",
+        "Sell-Side Q&A Analysis",
+        "Market Opportunity",
+        "Competitive Landscape",
+        "Valuation Context",
+        "Key Risks",
+        "Investment Framework",
+        "Open Questions",
+        "Sources",
+    ]
+    findings = []
+    for name in required:
+        if f"## {name}" not in draft:
+            findings.append({
+                "check_id": "C5",
+                "severity": "HIGH",
+                "fix": f"Required H2 section \"## {name}\" is missing. Add it with the content the section format calls for.",
+            })
+    return findings
+
+
+def _check_c6_margin_sanity(draft: str) -> list[dict]:
+    """C6 — Forward Estimates consensus table: gross margin ≥ EBITDA margin
+    (EBITDA cannot exceed gross profit). Belt-suspenders for Phase 2 rule."""
+    fp = _section_text(draft, "Financial Profile")
+    fe_match = re.search(r"###\s+Forward Estimates.*?(?=^###\s|\Z)", fp, re.MULTILINE | re.DOTALL)
+    if not fe_match:
+        return []
+    fe = fe_match.group(0)
+
+    def find_margin_row(label: str) -> tuple[float | None, float | None]:
+        m = re.search(
+            rf"\|\s*{label}\s*\|\s*[~]?([\d.]+)\s*%?\s*\|\s*[~]?([\d.]+)\s*%?\s*\|",
+            fe,
+            re.IGNORECASE,
+        )
+        if not m:
+            return None, None
+        return float(m.group(1)), float(m.group(2))
+
+    gm_y1, gm_y2 = find_margin_row(r"Gross Margin\s*%?")
+    em_y1, em_y2 = find_margin_row(r"EBITDA Margin\s*%?")
+
+    findings = []
+    if gm_y1 is not None and em_y1 is not None and em_y1 > gm_y1 + 0.5:
+        findings.append({
+            "check_id": "C6",
+            "severity": "HIGH",
+            "fix": (
+                f"Forward Estimates FY+1E EBITDA margin ({em_y1}%) exceeds gross margin "
+                f"({gm_y1}%) — impossible. Recompute EBITDA, drop the row, or correct the gross margin."
+            ),
+        })
+    if gm_y2 is not None and em_y2 is not None and em_y2 > gm_y2 + 0.5:
+        findings.append({
+            "check_id": "C6",
+            "severity": "HIGH",
+            "fix": (
+                f"Forward Estimates FY+2E EBITDA margin ({em_y2}%) exceeds gross margin "
+                f"({gm_y2}%) — impossible. Recompute EBITDA, drop the row, or correct the gross margin."
+            ),
+        })
+    return findings
+
+
+def _review_draft(draft: str, ticker: str, today: datetime.date) -> list[dict]:
+    """Run all C1-C6 checks against the draft. Returns a list of finding dicts.
+    Empty list = clean draft. Each finding has keys check_id, severity, fix."""
+    findings: list[dict] = []
+    c1 = _check_c1_lfy(draft, today)
+    if c1:
+        findings.append(c1)
+    findings.extend(_check_c2_snapshot_recon(draft))
+    findings.extend(_check_c3_peer_median(draft))
+    c4 = _check_c4_lens(draft)
+    if c4:
+        findings.append(c4)
+    findings.extend(_check_c5_sections(draft))
+    findings.extend(_check_c6_margin_sanity(draft))
+    return findings
+
+
+def _log_review(findings: list[dict]) -> None:
+    """Print review findings to stderr."""
+    if not findings:
+        typer.echo("[review] no issues found in Phase 3 draft", err=True)
+        return
+    typer.echo(f"[review] {len(findings)} issue(s) found in Phase 3 draft:", err=True)
+    for f in findings:
+        # Single-line summary; full fix text goes into the revision prompt
+        head = f["fix"].split(". ")[0][:200]
+        typer.echo(f"[review]   [{f['check_id']} {f['severity']:6s}] {head}", err=True)
+
+
+def _revise_draft(
+    client: OpenAI,
+    messages: list[dict],
+    draft: str,
+    findings: list[dict],
+    ticker: str,
+) -> str:
+    """Targeted revision: ask the model to fix ONLY the listed findings and
+    output the full revised report. Falls back to the original draft if the
+    revision looks broken (too short, dropped headings, stream errored)."""
+    findings_block = "\n".join(
+        f"- [{f['check_id']} {f['severity']}] {f['fix']}" for f in findings
+    )
+    revision_prompt = (
+        "Phase 4 — TARGETED REVISION\n\n"
+        "An automated review of your Phase 3 draft caught the following specific "
+        "issues:\n\n"
+        f"{findings_block}\n\n"
+        "Produce a REVISED version of the ENTIRE report that fixes ONLY these "
+        "specific issues. Do NOT re-do the analysis, do NOT rewrite sections that "
+        "aren't affected by the listed issues, and do NOT introduce new sections. "
+        "Preserve all original section headings, tables, sources, and analytical "
+        "content that wasn't called out above.\n\n"
+        f"Output the full revised report starting with the \"# {ticker.upper()}: Initiation Report\" "
+        "heading. No preamble, no commentary — just the revised markdown."
+    )
+
+    messages.append({"role": "assistant", "content": draft})
+    messages.append({"role": "user", "content": revision_prompt})
+
+    typer.echo(
+        f"[review] requesting targeted revision from model ({len(findings)} fixes)...",
+        err=True,
+    )
+    revise_start = time.monotonic()
+
+    revised_parts: list[str] = []
+    try:
+        stream = client.chat.completions.create(
+            model=MODEL,
+            messages=messages,
+            stream=True,
+            extra_body={"thinking": {"type": "disabled"}},
+        )
+        for chunk in stream:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            if delta.content:
+                sys.stdout.write(delta.content)
+                sys.stdout.flush()
+                revised_parts.append(delta.content)
+    except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ReadTimeout) as e:
+        typer.echo(
+            f"\n[review] stream error during revision ({type(e).__name__}); keeping original draft",
+            err=True,
+        )
+        return draft
+
+    revised = "".join(revised_parts).strip()
+    revise_elapsed = time.monotonic() - revise_start
+    revised = _strip_preamble(revised)  # reuse the existing preamble-strip safety
+
+    if not revised:
+        typer.echo("[review] revision empty — keeping original draft", err=True)
+        return draft
+
+    if len(revised) < len(draft) * 0.70:
+        typer.echo(
+            f"[review] revision too short ({len(revised)} vs draft {len(draft)} chars) "
+            f"— keeping original draft to avoid content loss",
+            err=True,
+        )
+        return draft
+
+    draft_h2 = set(re.findall(r"^##\s+(.+?)$", draft, re.MULTILINE))
+    revised_h2 = set(re.findall(r"^##\s+(.+?)$", revised, re.MULTILINE))
+    if len(revised_h2) + 1 < len(draft_h2):  # tolerate at most 1 missing heading
+        typer.echo(
+            f"[review] revision dropped section headings ({len(draft_h2)} → {len(revised_h2)}) "
+            f"— keeping original draft",
+            err=True,
+        )
+        return draft
+
+    typer.echo(
+        f"\n[review] revision complete in {revise_elapsed:.1f}s ({len(revised)} chars)",
+        err=True,
+    )
+    return revised
+
+
 # ---------- Output saving ----------
 
 FILLER = {"a","an","the","is","are","was","were","do","does","did","will",
@@ -1266,6 +1700,14 @@ def initiate(
     output = agentic_loop(
         client, tavily, messages, INITIATE_TOOLS, INITIATE_MAX_TOOL_CALLS, verbose
     )
+
+    # Phase 4: code-side review + targeted revision (only when findings exist).
+    # Catches the categories of mistakes that prompt-side rules don't reliably
+    # prevent (LFY off-by-one being the canonical case). See _review_draft.
+    findings = _review_draft(output, ticker, datetime.date.today())
+    _log_review(findings)
+    if findings:
+        output = _revise_draft(client, messages, output, findings, ticker)
 
     saved = _save(
         REPORTS_DIR,

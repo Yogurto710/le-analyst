@@ -27,6 +27,17 @@ The whole tool runs an **agentic tool-use loop** against Kimi K2.6 via the OpenA
 1. **Gather** (Phase 1): SEC filings, transcripts, Yahoo key-stats, per-peer financials, TAM, historical multiples, catalysts, Wall Street consensus (revenue + EPS, FY+1 and FY+2, subject AND every peer). Aim under 65 calls.
 2. **Compute** (Phase 2): `python_repl` for every derived metric and peer multiple. Hard cap of 3 calls. **Once Phase 2 begins, no more searches allowed.**
 3. **Synthesize** (Phase 3): write the report. No tool calls.
+4. **Review + revise** (Phase 4, optional): code-side checks C1-C6 parse the draft. If any fire, the model gets the finding list and produces a targeted revision; we save the revised version. Zero added cost when no findings; ~$0.20 + 3-5 min when a revision runs.
+
+Phase 4 checks (in `_review_draft`):
+- **C1** LFY column year in Financial Summary ≥ `today.year - 1` (the canonical persistent bug — LFY off-by-one was caught 4 of 5 China-ADR runs)
+- **C2** Trading Snapshot reconciliation: `price ÷ EPS ≈ P/E` and NM-consistency
+- **C3** Peer Comp Table median: <3 valid non-NM peer values → median cell must be `—`
+- **C4** Forward valuation lens matches LTM profitability (loss-making → forward EV/Revenue; profitable → forward P/E)
+- **C5** All 11 required H2 sections present
+- **C6** Forward Estimates: gross margin ≥ EBITDA margin
+
+The revision is a single model call with `_revise_draft`. If it comes back too short (<70% of draft) or drops section headings, we fall back to the draft and log the failure to stderr.
 
 Total `initiate` tool budget: 95 (raised from 90 to fund per-peer consensus searches for the forward peer comp table).
 
