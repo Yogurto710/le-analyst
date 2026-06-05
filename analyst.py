@@ -48,7 +48,9 @@ Today's date is {today}.
 Given a ticker and a research question, your process is:
 
 1. Decompose the question into 3-5 specific, answerable sub-questions that together address the main question.
-2. For each sub-question, run focused web_search queries to identify the best available sources. Then immediately use fetch_url to read the most promising results in depth — do not exhaust your search budget before fetching. Prioritize depth over breadth: 2-3 well-read sources per sub-question beat 10 skimmed snippets.
+2. For each sub-question, **YOU MUST call web_search** to identify the best available sources, then **YOU MUST call fetch_url** to read the most promising results in depth. Do not write any sub-question's findings until you have ACTUALLY FETCHED the relevant sources. Do not exhaust your search budget before fetching. Prioritize depth over breadth: 2-3 well-read sources per sub-question beat 10 skimmed snippets.
+
+HARD REQUIREMENT — automated check before saving: a research brief produced with ZERO tool calls will be REJECTED by the system and NOT saved. This catches drafts written from training-time knowledge without grounding in current sources. If the question references a specific date, a recent event, or anything within the past 12 months, you MUST call web_search at least 3 times before drafting any findings. Drafting time-sensitive content from training data alone produces hallucinated quotes, numbers, and URLs that look authoritative but are fabricated — the no-tool-calls check exists precisely to prevent this. The brief is worthless if its citations point to URLs you did not actually fetch.
 3. Synthesize findings into a research brief in Markdown.
 
 Output format:
@@ -845,10 +847,12 @@ def agentic_loop(
     tools: list[dict],
     max_tool_calls: int,
     verbose: bool,
-) -> str:
+) -> tuple[str, int]:
     """Run the agentic tool-use loop until the model emits a final text response.
-    Returns the assembled output text. Per-tool timings are logged to stderr,
-    and a breakdown by tool name is printed at the end."""
+    Returns (assembled_output_text, tool_calls_used). The tool-call count lets
+    callers enforce minimum-use policies (e.g., research rejects 0-call drafts
+    as likely hallucinated). Per-tool timings are logged to stderr, and a
+    breakdown by tool name is printed at the end."""
     tool_calls_used = 0
     python_repl_calls_used = 0  # tracked separately for the Phase 2 hard cap (see PHASE2_REPL_CAP)
     output_parts: list[str] = []
@@ -904,17 +908,17 @@ def agentic_loop(
             else:
                 typer.echo(f"\n[stream error: {type(e).__name__}: {e}]", err=True)
                 _log_loop_timing(loop_start, tool_stats, tool_calls_used)
-                return "".join(output_parts)
+                return "".join(output_parts), tool_calls_used
 
         if finish_reason == "stop":
             sys.stdout.write("\n")
             _log_loop_timing(loop_start, tool_stats, tool_calls_used)
-            return "".join(output_parts)
+            return "".join(output_parts), tool_calls_used
 
         if finish_reason != "tool_calls":
             typer.echo(f"\n\n[stopped with reason: {finish_reason}]", err=True)
             _log_loop_timing(loop_start, tool_stats, tool_calls_used)
-            return "".join(output_parts)
+            return "".join(output_parts), tool_calls_used
 
         assistant_tool_calls = [
             {
@@ -1656,9 +1660,24 @@ def research(
         {"role": "user", "content": f"Ticker: {ticker}\nResearch question: {question}"},
     ]
 
-    output = agentic_loop(
+    output, tool_calls_used = agentic_loop(
         client, tavily, messages, RESEARCH_TOOLS, RESEARCH_MAX_TOOL_CALLS, verbose
     )
+
+    # Hard zero-tool-calls guard: a research brief produced without ANY search
+    # or fetch was drafted purely from training-time knowledge. For questions
+    # about current events the result is hallucinated quotes / numbers / URLs
+    # that look authoritative. Refuse to save.
+    if tool_calls_used == 0:
+        typer.echo(
+            "\n[research] ABORTED: agentic loop completed with 0 tool calls. The model "
+            "drafted the brief from training-time knowledge without searching or fetching "
+            "ANY source. For questions about recent events this produces hallucinated "
+            "content (fabricated quotes, numbers, and URLs). No file saved. Re-run with a "
+            "more specific question, or check the model's behavior.",
+            err=True,
+        )
+        raise typer.Exit(1)
 
     saved = _save(
         BRIEFS_DIR,
@@ -1697,7 +1716,7 @@ def initiate(
     # at the cost of ~3-5s wall on the parallel fetch. See _prefetch_subject_docs.
     messages.extend(_prefetch_subject_docs(ticker))
 
-    output = agentic_loop(
+    output, _ = agentic_loop(
         client, tavily, messages, INITIATE_TOOLS, INITIATE_MAX_TOOL_CALLS, verbose
     )
 
