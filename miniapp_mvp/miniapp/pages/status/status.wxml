@@ -1,0 +1,12 @@
+<view class="container">
+  <view class="status-card">
+    <view class="status-label">{{statusLabel}}</view>
+    <view class="status-elapsed">已用时间:{{elapsed}} 秒</view>
+    <view wx:if="{{status === 'running' || status === 'pending'}}" class="hint">
+      简报通常需要 2-3 分钟,请保持本页打开。
+    </view>
+    <view wx:if="{{error}}" class="error">{{error}}</view>
+    <button wx:if="{{status === 'failed'}}" class="primary" bindtap="back">返回</button>
+  </view>
+  <view class="footer">公开信息工具,非投资建议</view>
+</view>

@@ -1,0 +1,19 @@
+{
+  "miniprogramRoot": "./",
+  "projectname": "le-analyst-mvp",
+  "appid": "wx86bb9bb1b55785e8",
+  "description": "Le Analyst — research brief mini-app (MVP)",
+  "setting": {
+    "urlCheck": false,
+    "es6": true,
+    "enhance": true,
+    "postcss": true,
+    "minified": true,
+    "newFeature": true,
+    "uglifyFileName": false,
+    "ignoreUploadUnusedFiles": true
+  },
+  "compileType": "miniprogram",
+  "libVersion": "latest",
+  "condition": {}
+}

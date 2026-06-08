@@ -1,0 +1,19 @@
+<view class="container">
+  <view class="toolbar">
+    <view class="lang-toggle">
+      <view class="opt {{lang === 'zh' ? 'on' : ''}}" bindtap="setZh">中文</view>
+      <view class="opt {{lang === 'en' ? 'on' : ''}}" bindtap="setEn">EN</view>
+    </view>
+  </view>
+
+  <view class="report-body">
+    <!-- Minimal-viable rendering: plain text with white-space:pre-wrap.
+         Swap for towxml when you want headings / tables styled. -->
+    <text user-select="{{true}}" selectable="{{true}}" space="nbsp">{{content}}</text>
+  </view>
+
+  <view class="footer">
+    本报告基于公开信息整理,不构成投资建议,
+    不提供买入/卖出/持有意见,不预测价格目标。
+  </view>
+</view>

@@ -1,0 +1,15 @@
+{
+  "pages": [
+    "pages/submit/submit",
+    "pages/status/status",
+    "pages/report/report"
+  ],
+  "window": {
+    "navigationBarTitleText": "Le Analyst",
+    "navigationBarBackgroundColor": "#ffffff",
+    "navigationBarTextStyle": "black",
+    "backgroundColor": "#f7f8fa"
+  },
+  "style": "v2",
+  "sitemapLocation": "sitemap.json"
+}

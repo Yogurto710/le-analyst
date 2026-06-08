@@ -1,0 +1,4 @@
+{
+  "desc": "default — allow all pages",
+  "rules": [{ "action": "allow", "page": "*" }]
+}

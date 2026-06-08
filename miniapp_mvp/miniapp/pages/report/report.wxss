@@ -1,0 +1,36 @@
+.toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 16rpx;
+}
+.lang-toggle {
+  display: flex;
+  border: 1rpx solid #e5e6eb;
+  border-radius: 8rpx;
+  overflow: hidden;
+}
+.lang-toggle .opt {
+  padding: 8rpx 24rpx;
+  font-size: 24rpx;
+  background: #fff;
+  color: #4e5969;
+}
+.lang-toggle .opt.on {
+  background: #1f2329;
+  color: #fff;
+}
+
+.report-body {
+  background: #fff;
+  border-radius: 16rpx;
+  padding: 32rpx;
+  margin-top: 16rpx;
+}
+.report-body text {
+  font-size: 28rpx;
+  line-height: 1.75;
+  color: #1f2329;
+  white-space: pre-wrap;
+  word-break: break-word;
+  display: block;
+}
