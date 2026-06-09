@@ -1,11 +1,4 @@
 <view class="container">
-  <view class="toolbar">
-    <view class="lang-toggle">
-      <view class="opt {{lang === 'zh' ? 'on' : ''}}" bindtap="setZh">中文</view>
-      <view class="opt {{lang === 'en' ? 'on' : ''}}" bindtap="setEn">EN</view>
-    </view>
-  </view>
-
   <view class="report-body">
     <!-- Minimal-viable rendering: plain text with white-space:pre-wrap.
          Swap for towxml when you want headings / tables styled. -->

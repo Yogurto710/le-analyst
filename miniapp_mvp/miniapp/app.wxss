@@ -14,13 +14,15 @@ page {
   background: #fff;
   border: 1rpx solid #e5e6eb;
   border-radius: 12rpx;
-  padding: 24rpx;
   margin-top: 12rpx;
   box-sizing: border-box;
   width: 100%;
-  font-size: 28rpx;
+  font-size: 32rpx;
 }
-.textarea { height: 200rpx; }
+/* Fixed height + horizontal-only padding so the single-line input renders
+   to the WeChat touch-target standard (88rpx) across iOS and Android. */
+.input    { height: 88rpx; padding: 0 24rpx; }
+.textarea { height: 240rpx; padding: 24rpx; line-height: 1.5; }
 
 .primary {
   background: #1f2329;

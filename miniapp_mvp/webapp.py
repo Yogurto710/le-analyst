@@ -32,6 +32,7 @@ from typing import Optional
 
 import httpx
 from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel, Field
 
 # ---------- config ----------
@@ -204,6 +205,20 @@ async def healthz():
         "dev_mode": DEV_MODE,
         "active_jobs": sum(1 for j in _jobs.values() if j["status"] == "running"),
     }
+
+
+# ---------- WeChat domain ownership verification ----------
+
+@app.get("/MP_verify_{token}.txt", response_class=PlainTextResponse)
+async def wx_verify_file(token: str):
+    """Serve the WeChat domain-ownership verification file. Drop the file
+    WeChat hands you (e.g. MP_verify_AbC123xYz.txt) into miniapp_mvp/wx_verify/
+    on the server, then click 提交 in the mini-app admin. The URL pattern
+    constrains `token` to a path segment, so traversal isn't possible."""
+    path = HERE / "wx_verify" / f"MP_verify_{token}.txt"
+    if not path.exists():
+        raise HTTPException(404, "verification file not present on server")
+    return path.read_text(encoding="utf-8")
 
 
 # ---------- job execution ----------

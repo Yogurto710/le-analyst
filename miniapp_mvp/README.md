@@ -69,19 +69,29 @@ WeChat devtools "compile without verification" toggle.
 
 ## Backend setup
 
+Easiest path: put all secrets in `../.env` (the same file `analyst.py`
+reads) and let `webapp.py` auto-load them. `.env.example` documents the
+four keys. Then:
+
 ```bash
 cd miniapp_mvp/
 pip install -r webapp_requirements.txt
+python -m uvicorn webapp:app --host 127.0.0.1 --port 8000
+```
 
-# Real WeChat login:
-export WX_APPID="wx................"
-export WX_SECRET="................................"
-export DAILY_QUOTA=5
-uvicorn webapp:app --host 0.0.0.0 --port 8000
+If you only want to smoke-test the pipeline without real WeChat login
+(useful while waiting for an AppID), set `DEV_MODE=1` — any posted code
+mints a dev token.
 
-# Or skip WeChat login while testing:
-export DEV_MODE=1
-uvicorn webapp:app --host 0.0.0.0 --port 8000
+**PowerShell (Windows):**
+```powershell
+$env:DEV_MODE = "1"
+python -m uvicorn webapp:app --host 127.0.0.1 --port 8000
+```
+
+**bash (Linux / macOS / WSL):**
+```bash
+DEV_MODE=1 python -m uvicorn webapp:app --host 127.0.0.1 --port 8000
 ```
 
 Smoke test in `DEV_MODE=1`:

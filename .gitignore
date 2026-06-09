@@ -11,3 +11,5 @@ venv/
 dist/
 build/
 *.log
+# WeChat DevTools per-developer local settings (sandbox/lint toggles, no shared value)
+miniapp_mvp/miniapp/project.private.config.json

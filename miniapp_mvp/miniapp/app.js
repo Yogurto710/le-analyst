@@ -2,8 +2,9 @@
 // stash it in globalData so every page can pick it up.
 App({
   globalData: {
-    // Replace with your real backend URL. Must be HTTPS in production;
-    // in the WeChat DevTools you can toggle "不校验合法域名" while iterating.
+    // LOCAL DEV value — points at uvicorn on the same machine as DevTools.
+    // Requires "不校验合法域名" toggle ON in DevTools (详情 → 本地设置).
+    // Revert to 'https://YOUR_BACKEND_DOMAIN' before committing.
     apiBase: 'https://YOUR_BACKEND_DOMAIN',
     token: null,
     loginError: null
