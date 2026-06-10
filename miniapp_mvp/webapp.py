@@ -267,9 +267,12 @@ _MD_TAG_STYLES = {
     "<td>":   '<td style="border:1rpx solid #e5e6eb;padding:10rpx 12rpx;vertical-align:top;">',
 }
 
-# Empty-div spacers injected around each block. The two columns ("before"
-# and "after") let us tune section breaks asymmetrically: e.g. big gap
-# above H2 (separating sections) but smaller gap below it (heading→body).
+# Spacers around each block. Two-column (before / after) tuning so the
+# H2 "section break" gap is large but the "heading→body" gap inside a
+# section stays tight. Each spacer carries a non-breaking space and
+# explicit display:block — empty <div>s collapse to zero height in WeChat
+# rich-text on some builds, the &nbsp; + matching line-height forces the
+# div to render at the requested rpx.
 # Effective vertical gaps:
 #   H1 → H2 (direct):        20 + 36 = 56rpx
 #   P  → H2:                 14 + 36 = 50rpx
@@ -277,17 +280,30 @@ _MD_TAG_STYLES = {
 #   P  → H3:                 14 + 22 = 36rpx
 #   H3 → P (heading→body):              16rpx
 #   P  → P:                  14 + 14 = 28rpx
+def _spacer(h: int) -> str:
+    # <div> here (not <p>) because the spacer's closing tag must not
+    # match any rule in _SPACERS — a </p> spacer would itself match
+    # the </p> rule on the next pass and double up. The original empty
+    # <div></div> collapsed to zero height on WeChat; adding &#160;
+    # content + display:block + font-size:1rpx forces the block to
+    # render at the requested height while the nbsp stays visually
+    # invisible (1rpx font on a non-breaking space is sub-pixel).
+    return (
+        f'<div style="height:{h}rpx;line-height:{h}rpx;display:block;'
+        f'margin:0;padding:0;font-size:1rpx;">&#160;</div>'
+    )
+
 _SPACERS = [
-    ("</h1>",         '</h1><div style="height:20rpx"></div>'),
-    ("<h2 ",          '<div style="height:36rpx"></div><h2 '),
-    ("</h2>",         '</h2><div style="height:22rpx"></div>'),
-    ("<h3 ",          '<div style="height:22rpx"></div><h3 '),
-    ("</h3>",         '</h3><div style="height:16rpx"></div>'),
-    ("</p>",          '</p><div style="height:14rpx"></div>'),
-    ("</ul>",         '</ul><div style="height:14rpx"></div>'),
-    ("</ol>",         '</ol><div style="height:14rpx"></div>'),
-    ("</blockquote>", '</blockquote><div style="height:14rpx"></div>'),
-    ("</pre>",        '</pre><div style="height:14rpx"></div>'),
+    ("</h1>",         "</h1>" + _spacer(20)),
+    ("<h2 ",          _spacer(36) + "<h2 "),
+    ("</h2>",         "</h2>" + _spacer(22)),
+    ("<h3 ",          _spacer(22) + "<h3 "),
+    ("</h3>",         "</h3>" + _spacer(16)),
+    ("</p>",          "</p>" + _spacer(14)),
+    ("</ul>",         "</ul>" + _spacer(14)),
+    ("</ol>",         "</ol>" + _spacer(14)),
+    ("</blockquote>", "</blockquote>" + _spacer(14)),
+    ("</pre>",        "</pre>" + _spacer(14)),
 ]
 
 # YAML frontmatter block (ticker / question / date / model / lang lines

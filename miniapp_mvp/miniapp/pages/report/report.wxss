@@ -4,6 +4,10 @@
   padding: 32rpx 28rpx;
   margin-top: 16rpx;
 }
+.copy-btn {
+  margin-top: 32rpx;
+  font-size: 30rpx;
+}
 /* All styling for headings / paragraphs / links / lists is injected
    inline by the server's _render_md_to_styled_html() — WeChat
    <rich-text> does not reliably honor page-level CSS for its child
