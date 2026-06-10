@@ -4,7 +4,7 @@
 
 A single-file Python CLI (`analyst.py`) that produces sourced markdown research on public equities. Three commands:
 
-- **`analyst research TICKER "QUESTION"`** — focused brief on a specific question. Output → `briefs/`.
+- **`analyst research TICKER "QUESTION"`** — focused brief on a specific question. Output → `briefs_en/` (English question) or `briefs_ch/` (Chinese question, single .md, no translation pass).
 - **`analyst initiate TICKER`** — deep-dive initiation report (10-K parsing, peer comps, valuation, investment framework). Output → `reports/`.
 - **`analyst translate PATH [--lang zh]`** — translate a finished report into another language; the English original is kept. See **Localization** below.
 
@@ -77,10 +77,10 @@ These are the rules and design decisions accumulated over several rounds of iter
 
 ### Output conventions
 
-- Briefs saved as `briefs/TICKER-slug-YYYYMMDD.md` with YAML frontmatter (ticker, question, date, model).
+- Briefs saved as `briefs_en/TICKER-slug-YYYYMMDD.md` (English questions) or `briefs_ch/TICKER-slug-YYYYMMDD.md` (Chinese questions — Kimi answers in Chinese directly, no translation pass). Routing in `analyst.py:_briefs_dir_for(question)` keys on any CJK character in the question text. YAML frontmatter (ticker, question, date, model) unchanged.
 - Initiations saved as `reports/TICKER-initiation-YYYYMMDD.md` with YAML frontmatter.
 - Slug = question with stopwords stripped, first 3 meaningful tokens. The stopword filler list includes "roblox" (legacy from RBLX testing — leave it).
-- Translations are saved beside the original as `…-YYYYMMDD.<lang>.md` (e.g. `.zh.md`), with the English frontmatter preserved plus a `lang:` line; only the body is translated.
+- Translations are saved beside the original as `…-YYYYMMDD.<lang>.md` (e.g. `.zh.md`), with the English frontmatter preserved plus a `lang:` line; only the body is translated. The mini-app backend (`miniapp_mvp/webapp.py`) skips `--translate zh` when the question is Chinese, so `briefs_ch/` holds single `.md` files only.
 
 ### Initiation report sections (in order)
 
@@ -137,7 +137,8 @@ pyproject.toml        # deps, console script entry point
 .env.example          # template for MOONSHOT_API_KEY / TAVILY_API_KEY
 .env                  # (gitignored) actual keys
 examples/             # committed sample reports
-briefs/               # (gitignored) research output
+briefs_en/            # (gitignored) research output — English questions
+briefs_ch/            # (gitignored) research output — Chinese questions
 reports/              # (gitignored) initiation output
 token_log/            # (gitignored) Kimi token usage spreadsheets
 README.md             # user-facing

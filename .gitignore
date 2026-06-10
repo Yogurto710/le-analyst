@@ -1,5 +1,8 @@
 .env
 briefs/
+briefs_en/
+# briefs_ch/ is intentionally tracked — Chinese briefs are published so
+# they can be read on a phone (GitHub web renders .md acceptably).
 reports/
 token_log/
 .claude/
@@ -13,3 +16,5 @@ build/
 *.log
 # WeChat DevTools per-developer local settings (sandbox/lint toggles, no shared value)
 miniapp_mvp/miniapp/project.private.config.json
+# Per-developer mini-app backend URL (localhost / tunnel / VPS) — see local.config.example.js
+miniapp_mvp/miniapp/local.config.js

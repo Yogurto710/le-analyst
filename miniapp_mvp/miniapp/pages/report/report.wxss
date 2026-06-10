@@ -1,14 +1,11 @@
 .report-body {
   background: #fff;
   border-radius: 16rpx;
-  padding: 32rpx;
+  padding: 32rpx 28rpx;
   margin-top: 16rpx;
 }
-.report-body text {
-  font-size: 28rpx;
-  line-height: 1.75;
-  color: #1f2329;
-  white-space: pre-wrap;
-  word-break: break-word;
-  display: block;
-}
+/* All styling for headings / paragraphs / links / lists is injected
+   inline by the server's _render_md_to_styled_html() — WeChat
+   <rich-text> does not reliably honor page-level CSS for its child
+   nodes, so class-based rules here would silently do nothing on some
+   Android builds. */

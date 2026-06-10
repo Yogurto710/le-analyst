@@ -25,8 +25,18 @@ for _stream in (sys.stdout, sys.stderr):
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
-BRIEFS_DIR = Path("briefs")
+BRIEFS_DIR_EN = Path("briefs_en")  # English-question briefs + their zh translations
+BRIEFS_DIR_CH = Path("briefs_ch")  # Chinese-question briefs (single .md, no translation pass)
 REPORTS_DIR = Path("reports")
+_CJK_RE = re.compile(r"[一-鿿]")
+
+
+def _briefs_dir_for(question: str) -> Path:
+    """Route by question language. CJK in the question → briefs_ch/ (Kimi
+    answers in Chinese directly, no translation pass needed). Otherwise
+    briefs_en/, where the English source and its .zh.md translation sit
+    side-by-side."""
+    return BRIEFS_DIR_CH if _CJK_RE.search(question) else BRIEFS_DIR_EN
 
 MODEL = "kimi-k2.6"
 BASE_URL = "https://api.moonshot.cn/v1"
@@ -1680,7 +1690,7 @@ def research(
         raise typer.Exit(1)
 
     saved = _save(
-        BRIEFS_DIR,
+        _briefs_dir_for(question),
         ticker,
         _slug(question),
         {

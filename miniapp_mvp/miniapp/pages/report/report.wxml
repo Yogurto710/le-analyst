@@ -1,8 +1,8 @@
 <view class="container">
   <view class="report-body">
-    <!-- Minimal-viable rendering: plain text with white-space:pre-wrap.
-         Swap for towxml when you want headings / tables styled. -->
-    <text user-select="{{true}}" selectable="{{true}}" space="nbsp">{{content}}</text>
+    <!-- <rich-text> renders the server-side markdown → HTML with inline
+         styles. Falls back to a plain message if html is empty. -->
+    <rich-text nodes="{{html}}" user-select="{{true}}" />
   </view>
 
   <view class="footer">

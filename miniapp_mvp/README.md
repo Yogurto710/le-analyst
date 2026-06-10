@@ -120,8 +120,17 @@ The job completes in ~2–3 min and the response carries `zh_md` and `en_md`.
    - In `project.config.json`, replace `"appid": "YOUR_APPID_HERE"` with your
      real AppID. Or, while waiting, use the "无需 AppID 测试号" option in
      DevTools.
-3. In `miniapp/app.js`, replace `apiBase` with your backend URL
-   (e.g. `https://le-analyst.example.com`).
+3. Set your backend URL in `miniapp/local.config.js` (gitignored).
+   On first checkout, copy the template:
+   ```powershell
+   copy miniapp\local.config.example.js miniapp\local.config.js
+   ```
+   then edit `local.config.js` and set `apiBase` to wherever uvicorn is
+   reachable from the simulator (Tier 0: `http://localhost:8000`; Tier 1:
+   your current `https://*.trycloudflare.com` URL; Tier 2: your stable
+   HK domain). Whatever's in this file at upload time gets compiled into
+   the experience build and shipped to testers' phones, so set it to a
+   real backend before clicking 上传.
 4. For experience build to talk to your domain, either:
    - Whitelist it in the mini-app admin → 开发管理 → 服务器域名 → request合法域名, **or**
    - In DevTools → 详情 → 本地设置 → check "不校验合法域名…" (dev only).
@@ -132,10 +141,76 @@ The three pages:
   Disclaimer modal on first launch (persisted via `wx.setStorageSync`).
 - **pages/status** — polls `GET /jobs/{id}` every 4s; redirects to report on
   `done`, surfaces error on `failed`.
-- **pages/report** — renders the markdown with a zh/EN toggle. The MVP uses a
-  plain `<text>` block with `white-space: pre-wrap` (looks fine, no library
-  needed). For prettier rendering, integrate [towxml](https://github.com/sbfkcel/towxml)
-  later — drop it under `miniapp/towxml/` and swap the wxml.
+- **pages/report** — renders the brief via WeChat's built-in `<rich-text>`.
+  The backend converts the markdown → inline-styled HTML once on completion
+  (see `_render_md_to_styled_html` in `webapp.py`) so the client carries no
+  vendor markdown library. Type styling all lives in the `_MD_TAG_STYLES`
+  dict on the backend; edit there and restart uvicorn to iterate.
+
+## Daily startup (after reboot / new shell)
+
+You need **three things running at once**: uvicorn (backend), cloudflared
+(tunnel to give the simulator + phone an HTTPS URL), and WeChat DevTools
+(client). Each lives in its own window. Quick-mode cloudflared URLs rotate
+on every restart, so the URL changes every time you do this.
+
+### 1. Backend — PowerShell window #1
+
+```powershell
+cd "c:\Users\Administrator\Documents\AI Coding\le-analyst\miniapp_mvp"
+$env:DEV_MODE = "1"
+python -m uvicorn webapp:app --host 127.0.0.1 --port 8000
+```
+
+Leave it running. Look for `Uvicorn running on http://127.0.0.1:8000`.
+
+### 2. Cloudflare Tunnel — PowerShell window #2
+
+```powershell
+cloudflared tunnel --url http://localhost:8000
+```
+
+After ~5 seconds it prints a banner with a URL like
+`https://random-words.trycloudflare.com`. Copy that URL.
+
+If `cloudflared` isn't installed: `winget install Cloudflare.cloudflared`.
+
+### 3. Point the mini-app at the new URL
+
+Edit `miniapp_mvp/miniapp/local.config.js` (gitignored) and replace
+`apiBase` with the URL from step 2. **No commit needed** — the file
+never enters git.
+
+### 4. Sanity check — same window or a third
+
+```powershell
+Invoke-RestMethod -Uri "https://YOUR_NEW_URL.trycloudflare.com/healthz"
+```
+
+Should return `{ok=True, analyst_exists=True, dev_mode=True, ...}`.
+
+### 5. WeChat DevTools
+
+Open DevTools → 编译. Simulator picks up the new `apiBase` automatically.
+Run a 提交 test to confirm the round-trip works.
+
+### Phone testing (optional, when needed)
+
+For real-phone testing the tunnel URL must be in the request whitelist.
+WeChat caches the whitelist by URL, so a rotated tunnel URL needs a
+re-whitelist + re-verify (drop the new `MP_verify_*.txt` into
+`miniapp_mvp/wx_verify/`). For day-to-day iteration, stay in the
+DevTools simulator; only re-whitelist + upload a new 体验版 when you
+specifically want to test on phone.
+
+### Shutdown
+
+- Ctrl+C in window #1 (uvicorn)
+- Ctrl+C in window #2 (cloudflared)
+- Close DevTools
+
+No state is lost: briefs are on disk in `briefs_en/` / `briefs_ch/`,
+secrets stay in `.env`, mini-app source is unchanged.
 
 ## What's explicitly missing (MVP boundaries)
 

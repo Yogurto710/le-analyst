@@ -1,11 +1,14 @@
 // Global app — wx.login on launch, exchange code for a session token,
 // stash it in globalData so every page can pick it up.
+//
+// apiBase lives in local.config.js (gitignored) so each developer can
+// point at a different backend (localhost, cloudflare tunnel, prod VPS)
+// without touching tracked files. See local.config.example.js for setup.
+const localConfig = require('./local.config.js')
+
 App({
   globalData: {
-    // LOCAL DEV value — points at uvicorn on the same machine as DevTools.
-    // Requires "不校验合法域名" toggle ON in DevTools (详情 → 本地设置).
-    // Revert to 'https://YOUR_BACKEND_DOMAIN' before committing.
-    apiBase: 'https://YOUR_BACKEND_DOMAIN',
+    apiBase: localConfig.apiBase,
     token: null,
     loginError: null
   },
