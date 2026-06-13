@@ -50,9 +50,9 @@ Page({
         if (d.status === 'done') {
           clearInterval(this.timer)
           wx.setStorageSync('lastReport', {
-            zh_md: d.zh_md,
-            zh_html: d.zh_html,
-            en_md: d.en_md
+            lang: d.lang,
+            md: d.md,
+            html: d.html
           })
           wx.redirectTo({ url: '/pages/report/report' })
         } else if (d.status === 'failed') {

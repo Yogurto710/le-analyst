@@ -49,10 +49,11 @@ BRIEFS_EN = ANALYST_DIR / "briefs_en"
 BRIEFS_CH = ANALYST_DIR / "briefs_ch"
 
 
-def _briefs_dir_for(question: str) -> Path:
+def _briefs_dir_for(lang: str) -> Path:
     """Mirror analyst.py's _briefs_dir_for routing so we look in the same
-    folder the subprocess will write into."""
-    return BRIEFS_CH if _is_chinese_question(question) else BRIEFS_EN
+    folder the subprocess will write into. Keys on the language flag, not
+    the question text (analyst.py changed to lang-flag routing as well)."""
+    return BRIEFS_CH if lang == "zh" else BRIEFS_EN
 
 
 def _load_dotenv(path: Path) -> None:
@@ -104,6 +105,10 @@ class WxLoginResp(BaseModel):
 class SubmitReq(BaseModel):
     ticker: str = Field(..., min_length=1, max_length=10)
     question: str = Field(..., min_length=5, max_length=500)
+    # Optional output language. If omitted, the backend auto-detects from
+    # the question (CJK in question → zh, otherwise en). Mini-app submit
+    # page sends this explicitly when the user uses the toggle.
+    lang: Optional[str] = Field(default=None, pattern="^(en|zh)$")
 
 
 class SubmitResp(BaseModel):
@@ -113,9 +118,9 @@ class SubmitResp(BaseModel):
 class JobResp(BaseModel):
     status: str        # pending | running | done | failed
     elapsed_s: float
-    zh_md: Optional[str] = None
-    zh_html: Optional[str] = None    # styled HTML for <rich-text> rendering
-    en_md: Optional[str] = None
+    lang: Optional[str] = None       # "en" or "zh" — echoes back what was used
+    md: Optional[str] = None         # markdown source in the chosen language
+    html: Optional[str] = None       # styled HTML for <rich-text> rendering
     error: Optional[str] = None
 
 
@@ -176,13 +181,20 @@ async def submit_job(req: SubmitReq, openid: str = Depends(current_openid)):
     if not ticker.isalnum():
         raise HTTPException(400, "ticker must be alphanumeric")
 
+    # Lang resolution: explicit req.lang wins; otherwise auto-detect from
+    # question (CJK → zh, else en). The mini-app submit page can send the
+    # explicit lang from its toggle; CLI-style callers can omit and let
+    # the heuristic apply.
+    lang = req.lang or ("zh" if _is_chinese_question(question) else "en")
+
     _usage[today_key] += 1
     job_id = secrets.token_urlsafe(12)
-    briefs_dir = _briefs_dir_for(question)
+    briefs_dir = _briefs_dir_for(lang)
     _jobs[job_id] = {
         "openid": openid,
         "ticker": ticker,
         "question": question,
+        "lang": lang,
         "status": "pending",
         "start": time.monotonic(),
         "briefs_dir": briefs_dir,
@@ -190,9 +202,8 @@ async def submit_job(req: SubmitReq, openid: str = Depends(current_openid)):
         "files_at_start": (
             {p.name for p in briefs_dir.glob("*.md")} if briefs_dir.exists() else set()
         ),
-        "zh_md": None,
-        "zh_html": None,
-        "en_md": None,
+        "md": None,
+        "html": None,
         "error": None,
     }
     asyncio.create_task(_run_job(job_id))
@@ -207,9 +218,9 @@ async def get_job(job_id: str, openid: str = Depends(current_openid)):
     return JobResp(
         status=job["status"],
         elapsed_s=round(time.monotonic() - job["start"], 1),
-        zh_md=job["zh_md"],
-        zh_html=job["zh_html"],
-        en_md=job["en_md"],
+        lang=job.get("lang"),
+        md=job["md"],
+        html=job["html"],
         error=job["error"],
     )
 
@@ -342,22 +353,26 @@ def _render_md_to_styled_html(md: str) -> str:
 # ---------- job execution ----------
 
 async def _run_job(job_id: str) -> None:
-    """Spawn `python analyst.py research TICKER "Q" --translate zh`, wait for
+    """Spawn `python analyst.py research TICKER "Q" --lang <en|zh>`, wait for
     completion, locate the new brief file, read EN + zh into the job dict."""
     job = _jobs[job_id]
     job["status"] = "running"
     try:
         job["briefs_dir"].mkdir(exist_ok=True)
-        # Only run the translation pass when the question was in English.
-        # Kimi is a Chinese-native model; a Chinese question produces a
-        # Chinese brief directly, and a follow-up "translate to Chinese"
-        # pass would waste tokens and risk silent re-phrasing.
+        # Explicit --lang means the model writes natively in the chosen
+        # language on the first pass (no translation step). The lang was
+        # resolved at submit time (explicit req.lang OR auto-detected
+        # from the question) and stored on the job.
         args = [
             sys.executable, str(ANALYST), "research",
             job["ticker"], job["question"],
+            "--lang", job["lang"],
         ]
-        if not _is_chinese_question(job["question"]):
-            args.extend(["--translate", "zh"])
+        # Optional model override (kimi | deepseek). Set LE_ANALYST_MODEL in
+        # .env or /etc/le-analyst/env to swap the default backend without
+        # editing this file. analyst.py defaults to kimi when unset.
+        if model := os.environ.get("LE_ANALYST_MODEL"):
+            args.extend(["--model", model])
         proc = await asyncio.create_subprocess_exec(
             *args,
             cwd=str(ANALYST_DIR),
@@ -377,28 +392,21 @@ async def _run_job(job_id: str) -> None:
             tail = (stderr or b"").decode("utf-8", "replace").strip()[-500:]
             raise RuntimeError(f"analyst exited {proc.returncode}: {tail}")
 
-        # Pick the brief file: starts with TICKER-, ends with .md (not .zh.md),
-        # didn't exist before the run started.
+        # Pick the brief file: starts with TICKER-, ends with .md, didn't
+        # exist before the run started. Only one file is produced per run
+        # now (no .zh.md sibling) — the chosen language is set up-front.
         candidates = [
             p for p in job["briefs_dir"].glob(f"{job['ticker']}-*.md")
             if p.name not in job["files_at_start"]
-            and not p.name.endswith(".zh.md")
         ]
         if not candidates:
             raise RuntimeError("brief file not found after run")
-        en_path = max(candidates, key=lambda p: p.stat().st_mtime)
-        zh_path = en_path.with_name(en_path.stem + ".zh.md")
+        path = max(candidates, key=lambda p: p.stat().st_mtime)
 
         # Strip YAML frontmatter so it doesn't leak into the rendered output.
-        # When the question was Chinese, zh_path won't exist (we skipped
-        # --translate); fall back to en_md_raw which is already in Chinese.
-        en_md_raw = en_path.read_text(encoding="utf-8")
-        zh_md_raw = (
-            zh_path.read_text(encoding="utf-8") if zh_path.exists() else en_md_raw
-        )
-        job["en_md"] = _strip_frontmatter(en_md_raw)
-        job["zh_md"] = _strip_frontmatter(zh_md_raw)
-        job["zh_html"] = _render_md_to_styled_html(job["zh_md"])
+        raw = path.read_text(encoding="utf-8")
+        job["md"] = _strip_frontmatter(raw)
+        job["html"] = _render_md_to_styled_html(job["md"])
         job["status"] = "done"
     except Exception as e:  # noqa: BLE001
         job["status"] = "failed"

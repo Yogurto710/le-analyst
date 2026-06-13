@@ -4,9 +4,8 @@
 
 A single-file Python CLI (`analyst.py`) that produces sourced markdown research on public equities. Three commands:
 
-- **`analyst research TICKER "QUESTION"`** — focused brief on a specific question. Output → `briefs_en/` (English question) or `briefs_ch/` (Chinese question, single .md, no translation pass).
-- **`analyst initiate TICKER`** — deep-dive initiation report (10-K parsing, peer comps, valuation, investment framework). Output → `reports/`.
-- **`analyst translate PATH [--lang zh]`** — translate a finished report into another language; the English original is kept. See **Localization** below.
+- **`analyst research TICKER "QUESTION" [--lang en|zh]`** — focused brief on a specific question. Output → `briefs_en/` or `briefs_ch/` depending on `--lang` (default `en`). Model writes natively in the chosen language on the first pass; no translation step.
+- **`analyst initiate TICKER [--lang en|zh]`** — deep-dive initiation report (10-K parsing, peer comps, valuation, investment framework). Output → `reports/`. Same `--lang` semantics.
 
 Public repo: https://github.com/Yogurto710/le-analyst
 
@@ -27,7 +26,7 @@ The whole tool runs an **agentic tool-use loop** against Kimi K2.6 via the OpenA
 1. **Gather** (Phase 1): SEC filings, transcripts, Yahoo key-stats, per-peer financials, TAM, historical multiples, catalysts, Wall Street consensus (revenue + EPS, FY+1 and FY+2, subject AND every peer). Aim under 65 calls.
 2. **Compute** (Phase 2): `python_repl` for every derived metric and peer multiple. Hard cap of 3 calls. **Once Phase 2 begins, no more searches allowed.**
 3. **Synthesize** (Phase 3): write the report. No tool calls.
-4. **Review + revise** (Phase 4, optional): code-side checks C1-C6 parse the draft. If any fire, the model gets the finding list and produces a targeted revision; we save the revised version. Zero added cost when no findings; ~$0.20 + 3-5 min when a revision runs.
+4. **Review + revise** (Phase 4, optional): code-side checks C1-C7 parse the draft. If any fire, the model gets the finding list and produces a targeted revision; we save the revised version. Zero added cost when no findings; ~$0.20 + 3-5 min when a revision runs.
 
 Phase 4 checks (in `_review_draft`):
 - **C1** LFY column year in Financial Summary ≥ `today.year - 1` (the canonical persistent bug — LFY off-by-one was caught 4 of 5 China-ADR runs)
@@ -36,22 +35,23 @@ Phase 4 checks (in `_review_draft`):
 - **C4** Forward valuation lens matches LTM profitability (loss-making → forward EV/Revenue; profitable → forward P/E)
 - **C5** All 11 required H2 sections present
 - **C6** Forward Estimates: gross margin ≥ EBITDA margin
+- **C7** Citation completeness: every `[N]` in body has a matching `[N]` source entry, no truncation (highest-indexed source must contain a URL), body must cite sources if substantive (>500 words). Catches the DeepSeek failure mode where the model emits a long uncited body, and the KM-07 off-by-one regression.
 
 The revision is a single model call with `_revise_draft`. If it comes back too short (<70% of draft) or drops section headings, we fall back to the draft and log the failure to stderr.
 
 Total `initiate` tool budget: 95 (raised from 90 to fund per-peer consensus searches for the forward peer comp table).
 
-## Localization (`analyst translate`)
+## Language (`--lang en|zh`)
 
-`analyst translate PATH [--lang zh]` writes a translated sibling of a finished report (e.g. `reports/MU-initiation-20260525.zh.md`); `initiate`/`research` also take a `--translate zh` flag to do it right after saving. Design decisions, don't undo without understanding:
+Language is chosen up-front via `--lang` and the model writes natively on the first pass. **There is no translation step.** This replaced a prior post-hoc translate flow after the user observed empirically that Kimi's first-pass Chinese reads better than a translation of its own English.
 
-- **English stays canonical.** Sources for US-listed names are English, so the English report is the source of truth and translation is a separate, re-runnable pass over the finished markdown — NOT a second generation. Don't move analysis into the translation step.
-- **Reuses Kimi.** Translation is the same `kimi-k2.6` (a Chinese-native model) via one non-agentic streaming call (no tools), `thinking` disabled, with one retry on the usual `api.moonshot.cn` mid-stream drops. No new provider or dependency.
-- **Preserve-exactly rules live in `TRANSLATE_SYSTEM_PROMPT_TEMPLATE`.** Numbers/units pass through verbatim; `$` is never converted to ¥/RMB; source URLs stay byte-identical; tables/headings/section order preserved; tickers stay Latin; a financial-term glossary keeps terminology consistent.
-- **The Investment Framework discipline is re-stated in the translation prompt** — the model must not introduce 买入/卖出/持有 or a price target, because Chinese makes those phrasings very natural.
-- **Frontmatter preserved verbatim** with a `lang:` line added; only the body is translated (`_split_frontmatter` / `_frontmatter_with_lang`).
-- **`_verify_translation` is a guardrail, not a gate.** It warns (stderr) if the URL set, table-row count, or heading count drifts from the English — catching dropped sources or mangled tables — but never blocks the save.
-- Only `zh` has a tuned glossary today; other codes fall back to a generic prompt with a heads-up. Cost ~$0.05-0.15 per report.
+- **`--lang en`** (default): system prompt is unchanged from the long-standing template. Preserves Kimi's ~96% prompt-cache hit rate.
+- **`--lang zh`**: the same template plus `_LANG_INSTRUCTION_ZH` appended. That block carries the preserve-verbatim rules (numbers, currency `$`, source URLs byte-identical, tickers in Latin, English source titles untranslated), the Chinese financial-term glossary (EBITDA/FCF/etc. as-is; established Chinese names like 网易/美光), and the Investment Framework discipline re-stated in Chinese (no 买入/卖出/持有, no 价格目标 — these phrasings are very natural in Chinese, so the rule must be explicit there).
+- **Sources stay English regardless.** The model reads English 10-Ks, transcripts, FT, etc., and cites them with English titles and original URLs. The Chinese-mode prompt's preserve-verbatim rules enforce this.
+- **YAML frontmatter records the language** via a `lang:` line so the saved file documents what produced it (alongside `model:` and `date:`).
+- **File routing** is keyed off `--lang`: `briefs_en/` for English, `briefs_ch/` for Chinese. One `.md` per run — no `.zh.md` sibling.
+- **The mini-app** (`miniapp_mvp/`) exposes a 中文/English toggle on the submit page; it auto-detects from the question's language as the default and the user can override. The chosen language is sent as a `lang` field on `POST /jobs` and forwarded to `analyst.py --lang ...`.
+- Legacy `.zh.md` files in `briefs_en/` from the previous translate flow are historical artifacts; webapp.py and analyst.py no longer produce or consume them.
 
 ## Critical conventions that aren't obvious from the code
 
@@ -59,7 +59,7 @@ These are the rules and design decisions accumulated over several rounds of iter
 
 ### Model and pricing
 
-- **Model is `kimi-k2.6`**. Do NOT switch to Claude/GPT without discussing — the cost story depends on Kimi's prompt caching (cached input ~17% of uncached, and we get ~96% cache hit rate on a typical run).
+- **Default model is `kimi-k2.6`**, opt-in alternative is `deepseek-v4-pro` via `--model deepseek` on any command (or `LE_ANALYST_MODEL=deepseek` in env). Registered in `MODELS` dict at the top of `analyst.py` — each entry carries id + base_url + api_key_env + extra_body so adding a third model is a few lines. Do NOT switch to Claude/GPT without discussing — the cost story for Kimi depends on its prompt caching (cached input ~17% of uncached, ~96% hit rate on a typical run). DeepSeek's caching is automatic and shaped differently; per-run cost is roughly comparable but the savings come from different places. Whichever model produces the brief, its id is written to the YAML frontmatter `model:` line so the file records what generated it.
 - **`thinking: {"type": "disabled"}`** is set in `extra_body`. Enabling thinking breaks the OpenAI-compatible tool-calling round-trip because `reasoning_content` is required in subsequent messages but the streaming SDK doesn't surface it cleanly.
 
 ### Source quality (hard rules — these encode prior failures)
@@ -77,10 +77,9 @@ These are the rules and design decisions accumulated over several rounds of iter
 
 ### Output conventions
 
-- Briefs saved as `briefs_en/TICKER-slug-YYYYMMDD.md` (English questions) or `briefs_ch/TICKER-slug-YYYYMMDD.md` (Chinese questions — Kimi answers in Chinese directly, no translation pass). Routing in `analyst.py:_briefs_dir_for(question)` keys on any CJK character in the question text. YAML frontmatter (ticker, question, date, model) unchanged.
-- Initiations saved as `reports/TICKER-initiation-YYYYMMDD.md` with YAML frontmatter.
+- Briefs saved as `briefs_en/TICKER-slug-YYYYMMDD.md` or `briefs_ch/TICKER-slug-YYYYMMDD.md`, routed by `analyst.py:_briefs_dir_for(lang)` on the `--lang` flag. One file per run, no `.zh.md` sibling. YAML frontmatter carries `ticker`, `question`, `date`, `lang`, and `model` (the actual id used, e.g. `kimi-k2.6` or `deepseek-v4-pro`).
+- Initiations saved as `reports/TICKER-initiation-YYYYMMDD.md` with the same frontmatter shape (sans `question`).
 - Slug = question with stopwords stripped, first 3 meaningful tokens. The stopword filler list includes "roblox" (legacy from RBLX testing — leave it).
-- Translations are saved beside the original as `…-YYYYMMDD.<lang>.md` (e.g. `.zh.md`), with the English frontmatter preserved plus a `lang:` line; only the body is translated. The mini-app backend (`miniapp_mvp/webapp.py`) skips `--translate zh` when the question is Chinese, so `briefs_ch/` holds single `.md` files only.
 
 ### Initiation report sections (in order)
 

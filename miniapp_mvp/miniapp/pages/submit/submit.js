@@ -1,9 +1,14 @@
 const app = getApp()
 
+// Any CJK Unified Ideograph triggers the zh default.
+const CJK_RE = /[一-鿿]/
+
 Page({
   data: {
     ticker: '',
     question: '',
+    lang: 'en',           // current selection
+    langAuto: true,       // true until the user clicks the toggle (auto-detect from question)
     submitting: false,
     showDisclaimer: false,
     loginError: '',
@@ -25,16 +30,30 @@ Page({
     this.setData({ showDisclaimer: false })
   },
 
-  onTicker(e)   { this.setData({ ticker: e.detail.value.toUpperCase() }) },
-  onQuestion(e) { this.setData({ question: e.detail.value }) },
+  onTicker(e) { this.setData({ ticker: e.detail.value.toUpperCase() }) },
+
+  onQuestion(e) {
+    const question = e.detail.value
+    const update = { question }
+    // While the user hasn't manually chosen a language, keep the toggle
+    // in sync with the question's language. After they tap the toggle
+    // (langAuto = false), respect their choice.
+    if (this.data.langAuto) {
+      update.lang = CJK_RE.test(question) ? 'zh' : 'en'
+    }
+    this.setData(update)
+  },
+
+  onLang(e) {
+    this.setData({ lang: e.currentTarget.dataset.lang, langAuto: false })
+  },
 
   async submit() {
-    const { ticker, question } = this.data
+    const { ticker, question, lang } = this.data
     if (!ticker || !question) {
       wx.showToast({ title: '请填写代码和问题', icon: 'none' })
       return
     }
-    // Token might not be ready if the user is fast — try once more.
     if (!app.globalData.token) {
       await app.login()
     }
@@ -51,7 +70,7 @@ Page({
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + app.globalData.token
       },
-      data: { ticker, question },
+      data: { ticker, question, lang },
       success: (r) => {
         this.setData({ submitting: false })
         if (r.statusCode === 200 && r.data.job_id) {

@@ -25,21 +25,44 @@ for _stream in (sys.stdout, sys.stderr):
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
-BRIEFS_DIR_EN = Path("briefs_en")  # English-question briefs + their zh translations
-BRIEFS_DIR_CH = Path("briefs_ch")  # Chinese-question briefs (single .md, no translation pass)
-REPORTS_DIR = Path("reports")
-_CJK_RE = re.compile(r"[一-鿿]")
+BRIEFS_DIR_EN = Path("briefs_en")  # English-language briefs
+BRIEFS_DIR_CH = Path("briefs_ch")  # Chinese-language briefs
+REPORTS_DIR = Path("reports")      # Initiation reports (one .md per run)
 
 
-def _briefs_dir_for(question: str) -> Path:
-    """Route by question language. CJK in the question → briefs_ch/ (Kimi
-    answers in Chinese directly, no translation pass needed). Otherwise
-    briefs_en/, where the English source and its .zh.md translation sit
-    side-by-side."""
-    return BRIEFS_DIR_CH if _CJK_RE.search(question) else BRIEFS_DIR_EN
+def _briefs_dir_for(lang: str) -> Path:
+    """Route by the explicit output language flag."""
+    return BRIEFS_DIR_CH if lang == "zh" else BRIEFS_DIR_EN
 
-MODEL = "kimi-k2.6"
-BASE_URL = "https://api.moonshot.cn/v1"
+# Model registry. Default is kimi (Chinese-native, cheap with prompt caching
+# at ~96% hit rate). DeepSeek V4 Pro is an opt-in alternative — faster wall
+# time per token and lower headline price, but a different cache strategy
+# (DeepSeek does automatic context caching server-side, so the savings shape
+# differs from Kimi's explicit cache_read_tokens). Switch via `--model
+# deepseek` on the CLI or LE_ANALYST_MODEL=deepseek in env.
+MODELS = {
+    "kimi": {
+        "id": "kimi-k2.6",
+        "base_url": "https://api.moonshot.cn/v1",
+        "api_key_env": "MOONSHOT_API_KEY",
+        # Disabling thinking is required: enabling it breaks the
+        # OpenAI-compatible tool-calling round-trip on Moonshot.
+        "extra_body": {"thinking": {"type": "disabled"}},
+    },
+    "deepseek": {
+        "id": "deepseek-v4-pro",
+        "base_url": "https://api.deepseek.com/v1",
+        "api_key_env": "DEEPSEEK_API_KEY",
+        # V4 Pro is a reasoning model by default — it streams reasoning_content
+        # alongside content and tool_calls, then expects the reasoning_content
+        # to be passed back in subsequent assistant messages of the same
+        # tool-call round. Our agentic_loop doesn't surface it (and matching
+        # Kimi's posture, we don't want it). Happy coincidence: DeepSeek's
+        # API accepts the same `thinking: {"type": "disabled"}` shape Kimi uses.
+        "extra_body": {"thinking": {"type": "disabled"}},
+    },
+}
+DEFAULT_MODEL = "kimi"
 RESEARCH_MAX_TOOL_CALLS = 30
 INITIATE_MAX_TOOL_CALLS = 95  # +10 vs original: +5 for subject consensus, +5 for per-peer consensus that powers the forward peer comp table
 PHASE2_REPL_CAP = 3  # python_repl calls per initiate run; enforced in agentic_loop so the model can't iterate past it
@@ -857,6 +880,7 @@ def agentic_loop(
     tools: list[dict],
     max_tool_calls: int,
     verbose: bool,
+    model_cfg: dict,
 ) -> tuple[str, int]:
     """Run the agentic tool-use loop until the model emits a final text response.
     Returns (assembled_output_text, tool_calls_used). The tool-call count lets
@@ -871,12 +895,12 @@ def agentic_loop(
 
     while True:
         stream = client.chat.completions.create(
-            model=MODEL,
+            model=model_cfg["id"],
             messages=messages,
             tools=tools,
             tool_choice="auto",
             stream=True,
-            extra_body={"thinking": {"type": "disabled"}},
+            extra_body=model_cfg["extra_body"],
         )
 
         content_parts: list[str] = []
@@ -1341,8 +1365,78 @@ def _check_c6_margin_sanity(draft: str) -> list[dict]:
     return findings
 
 
+def _check_c7_citations(draft: str) -> list[dict]:
+    """C7 — Citation completeness. Every [N] inline citation in the body
+    must have a matching [N] entry in the Sources section, and the Sources
+    section must not be truncated mid-entry (the highest-indexed source
+    must contain a URL). Catches:
+      - Body-vs-Sources index mismatch (KM-07 off-by-one regression)
+      - Mid-stream truncation of the Sources list (DS-02 failure mode where
+        DeepSeek's revision pass cut off at "[1] Marvell ... (filed March")"""
+    findings: list[dict] = []
+
+    if "## Sources" not in draft:
+        # C5 already catches a missing Sources section; don't double-flag.
+        return findings
+    body, sources = draft.rsplit("## Sources", 1)
+
+    inline_indices = {int(n) for n in re.findall(r"\[(\d+)\]", body)}
+    entry_indices = {int(n) for n in re.findall(r"^\s*\[(\d+)\]", sources, re.MULTILINE)}
+
+    # Body has substantial content but cites nothing — the model didn't
+    # follow the citation contract. (Observed: DeepSeek MRVL Phase 3 draft
+    # produced 4,800+ words with zero [N] citations.)
+    if len(body.split()) > 500 and not inline_indices:
+        findings.append({
+            "check_id": "C7",
+            "severity": "HIGH",
+            "fix": (
+                "Body contains substantial content but no [N] inline citations. "
+                "Every factual claim about the subject or peers must end with a "
+                "[N] reference that resolves to an entry in the Sources section. "
+                "Re-emit the body with inline citations attached to every sourced claim."
+            ),
+        })
+
+    # Body-vs-Sources index mismatch: every [N] cited must have a [N] entry.
+    missing = inline_indices - entry_indices
+    if missing:
+        findings.append({
+            "check_id": "C7",
+            "severity": "HIGH",
+            "fix": (
+                f"Citation indices {sorted(missing)} appear in the body as [N] "
+                "but have no matching entry in the Sources section. Add a source "
+                "line — Title — Publication — Date — URL — for each missing index."
+            ),
+        })
+
+    # Truncation: the highest-numbered source entry must contain a URL.
+    # The DS-02 failure mode was the entire Sources list cut off mid-source-1.
+    if entry_indices:
+        last_idx = max(entry_indices)
+        # Capture the text of the [last_idx] entry up to the next "[N]" line
+        # start or end of section.
+        m = re.search(
+            rf"\[{last_idx}\][^\n]*(?:\n(?!\s*\[\d+\]).*)*",
+            sources, re.MULTILINE,
+        )
+        if m and not re.search(r"https?://[^\s)\]]+", m.group(0)):
+            findings.append({
+                "check_id": "C7",
+                "severity": "HIGH",
+                "fix": (
+                    f"Source entry [{last_idx}] appears truncated — it contains no URL. "
+                    "Each source line must end with the URL the claim was actually "
+                    "fetched from. Re-emit the entire Sources list completely."
+                ),
+            })
+
+    return findings
+
+
 def _review_draft(draft: str, ticker: str, today: datetime.date) -> list[dict]:
-    """Run all C1-C6 checks against the draft. Returns a list of finding dicts.
+    """Run all C1-C7 checks against the draft. Returns a list of finding dicts.
     Empty list = clean draft. Each finding has keys check_id, severity, fix."""
     findings: list[dict] = []
     c1 = _check_c1_lfy(draft, today)
@@ -1355,6 +1449,7 @@ def _review_draft(draft: str, ticker: str, today: datetime.date) -> list[dict]:
         findings.append(c4)
     findings.extend(_check_c5_sections(draft))
     findings.extend(_check_c6_margin_sanity(draft))
+    findings.extend(_check_c7_citations(draft))
     return findings
 
 
@@ -1376,6 +1471,7 @@ def _revise_draft(
     draft: str,
     findings: list[dict],
     ticker: str,
+    model_cfg: dict,
 ) -> str:
     """Targeted revision: ask the model to fix ONLY the listed findings and
     output the full revised report. Falls back to the original draft if the
@@ -1409,10 +1505,10 @@ def _revise_draft(
     revised_parts: list[str] = []
     try:
         stream = client.chat.completions.create(
-            model=MODEL,
+            model=model_cfg["id"],
             messages=messages,
             stream=True,
-            extra_body={"thinking": {"type": "disabled"}},
+            extra_body=model_cfg["extra_body"],
         )
         for chunk in stream:
             if not chunk.choices:
@@ -1506,149 +1602,85 @@ def _save(directory: Path, ticker: str, slug: str, frontmatter: dict, content: s
 
 # ---------- Setup helper ----------
 
-def _moonshot_client() -> OpenAI:
-    load_dotenv()
-    moonshot_key = os.environ.get("MOONSHOT_API_KEY")
-    if not moonshot_key:
-        typer.echo("MOONSHOT_API_KEY not set (add it to .env)", err=True)
+def _resolve_model(name: str) -> dict:
+    """Look up a model entry from MODELS, with a clear error if the name
+    is unknown. Returns the full config dict (id, base_url, api_key_env,
+    extra_body)."""
+    if name not in MODELS:
+        typer.echo(
+            f"Unknown model '{name}'. Available: {', '.join(MODELS)}",
+            err=True,
+        )
         raise typer.Exit(1)
-    return OpenAI(api_key=moonshot_key, base_url=BASE_URL)
+    return MODELS[name]
 
 
-def _setup_clients() -> tuple[OpenAI, TavilyClient]:
-    client = _moonshot_client()
+def _make_llm_client(model_name: str = DEFAULT_MODEL) -> tuple[OpenAI, dict]:
+    """Returns (OpenAI client pointed at the right base_url, model_cfg).
+    Loads .env so callers don't have to."""
+    load_dotenv()
+    cfg = _resolve_model(model_name)
+    key = os.environ.get(cfg["api_key_env"])
+    if not key:
+        typer.echo(
+            f"{cfg['api_key_env']} not set (add it to .env)",
+            err=True,
+        )
+        raise typer.Exit(1)
+    return OpenAI(api_key=key, base_url=cfg["base_url"]), cfg
+
+
+def _setup_clients(model_name: str = DEFAULT_MODEL) -> tuple[OpenAI, TavilyClient, dict]:
+    """Returns (llm_client, tavily_client, model_cfg)."""
+    client, cfg = _make_llm_client(model_name)
     tavily_key = os.environ.get("TAVILY_API_KEY")
     if not tavily_key:
         typer.echo("TAVILY_API_KEY not set (add it to .env)", err=True)
         raise typer.Exit(1)
-    return client, TavilyClient(api_key=tavily_key)
+    return client, TavilyClient(api_key=tavily_key), cfg
 
 
-# ---------- Translation ----------
+# ---------- Language ----------
 #
-# Localization is post-hoc and additive: the English report stays the canonical
-# artifact (sources for US-listed names are English), and translation is a separate,
-# re-runnable pass over the finished markdown. The translation model is Kimi itself —
-# a Chinese-native model — so no new provider is needed.
+# Output language is chosen up-front via --lang and the model writes natively.
+# No post-hoc translation pass: Kimi's first-pass Chinese reads better than a
+# translation of its own English, and DeepSeek handles either side well.
+# Sources for US-listed names remain English; the rules for preserving them
+# verbatim (URLs, numbers, $, tickers, no buy/sell/hold) live in the
+# language-instruction block that gets appended to the system prompt only
+# when lang=zh, so English runs (the common case) keep their prompt cache.
 
-TRANSLATE_LANG_NAMES = {"zh": "Simplified Chinese (简体中文)"}
+LANG_NAMES = {"en": "English", "zh": "Simplified Chinese (简体中文)"}
 
-TRANSLATE_SYSTEM_PROMPT_TEMPLATE = """You are a professional financial translator. Translate the equity-research report below from English into {language}. It will be read by {language} investors analyzing US-listed (NYSE / NASDAQ) equities.
+_LANG_INSTRUCTION_ZH = """
 
-Output ONLY the translated Markdown — no preamble, no explanation, no code fences. Start directly with the first heading.
+WRITE THIS REPORT ENTIRELY IN SIMPLIFIED CHINESE (简体中文). The reader is a Chinese-speaking investor analyzing US-listed equities.
 
-PRESERVE EXACTLY — do not alter, reformat, or translate any of these:
-- Numbers, dates, and units: $, %, x (as in 14.5x), B / M / bn / mn, basis points, ratios. NEVER convert currency — US dollars stay US dollars ($); do not restate as RMB / ¥.
-- Every source URL, character for character. You may translate the title/publication text on a source line, but the URL itself must be byte-identical.
-- Ticker symbols (e.g. RBLX, MU, NTES) — keep them in Latin letters.
-- Markdown structure: keep every heading and its level, every table (same columns, same number of rows, same pipes and alignment), every list, and the section order identical to the source.
-- YAML frontmatter is handled separately — it is NOT included below, so translate only the body.
+Preserve EXACTLY (do not translate, transliterate, or convert):
+- Numbers, dates, and units verbatim: $, %, x (as in 14.5x), B / M / bn / mn, basis points, ratios.
+- Currency: US dollars stay US dollars ($). NEVER restate as RMB / ¥.
+- Source URLs — byte-identical. Source titles may be in English; do not translate them. Publication names may be transliterated if a standard Chinese form is well established, otherwise keep English.
+- Ticker symbols in Latin letters (e.g. RBLX, MU, NTES).
+- Markdown structure: headings, tables (same columns, same number of rows, same alignment), lists, section order — identical to what the English version would have.
 
-TERMINOLOGY — use standard {language} financial terms, applied consistently throughout:
-- Keep these acronyms as-is (optionally add the {language} term in parentheses on first use only): EBITDA, FCF, DCF, EV, TAM, GAAP, SBC, CAGR, YoY, QoQ, LTM, TTM, DAU, MAU, ARPU, ROE, ROIC.
+Terminology — use standard Chinese financial terms, consistently:
+- Keep these acronyms as-is (optionally add Chinese term in parentheses on first use only): EBITDA, FCF, DCF, EV, TAM, GAAP, SBC, CAGR, YoY, QoQ, LTM, TTM, DAU, MAU, ARPU, ROE, ROIC.
 - free cash flow → 自由现金流; enterprise value → 企业价值; bookings → 预订量（流水）; deferred revenue → 递延收入; gross margin → 毛利率; operating margin → 营业利润率; net cash → 净现金; dilution → 摊薄; guidance → 业绩指引; consensus → 市场一致预期; re-rating → 估值重估.
-- Company names: use the established {language} name where one exists (e.g. NetEase → 网易, Micron → 美光); otherwise keep the English name.
+- Company names: use the established Chinese name where one exists (e.g. NetEase → 网易, Micron → 美光); otherwise keep the English name.
 
-DISCIPLINE — this report deliberately follows these rules, and your translation must preserve them:
-- Never introduce a buy / sell / hold recommendation (买入 / 卖出 / 持有) or any directional rating, even where it would read naturally. The English contains none; neither should the translation.
-- Never introduce a specific price target. Keep valuation framed exactly as the English does — percentage ranges and scenarios.
-- Translate faithfully and completely. Do not add, drop, soften, or sharpen any claim, and do not summarize.
+The Investment Framework discipline applies in Chinese exactly as it does in English:
+- Never write 买入 / 卖出 / 持有 (or any directional rating phrasing). Chinese makes these phrasings very natural — resist.
+- Never output a specific 价格目标 (price target). Express direction as percentage ranges and scenarios, exactly as the English-mode prompt instructs above.
 """
 
 
-def _translate_text(client: OpenAI, content: str, lang: str) -> str:
-    """Single-shot translation of finished report markdown. No tools; one retry on the
-    mid-stream connection drops that occasionally hit api.moonshot.cn."""
-    language = TRANSLATE_LANG_NAMES.get(lang, lang)
-    system_prompt = TRANSLATE_SYSTEM_PROMPT_TEMPLATE.format(language=language)
-    last_err = None
-    for _attempt in range(2):
-        parts: list[str] = []
-        try:
-            stream = client.chat.completions.create(
-                model=MODEL,
-                messages=[
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": content},
-                ],
-                stream=True,
-                extra_body={"thinking": {"type": "disabled"}},
-            )
-            for chunk in stream:
-                if not chunk.choices:
-                    continue
-                delta = chunk.choices[0].delta
-                if delta.content:
-                    sys.stdout.write(delta.content)
-                    sys.stdout.flush()
-                    parts.append(delta.content)
-            return "".join(parts)
-        except (httpx.ReadError, httpx.RemoteProtocolError, httpx.ReadTimeout) as e:
-            last_err = e
-            typer.echo(f"\n[connection dropped, retrying translation] {e}", err=True)
-    raise last_err
-
-
-def _split_frontmatter(text: str) -> tuple[str, str]:
-    """Return (frontmatter_block, body). The block keeps its --- fences and trailing
-    newline; '' if the file has no frontmatter."""
-    m = re.match(r"(---\n.*?\n---\n)(.*)", text, re.DOTALL)
-    return (m.group(1), m.group(2)) if m else ("", text)
-
-
-def _frontmatter_with_lang(fm_block: str, lang: str) -> str:
-    """Re-emit the frontmatter verbatim with a `lang:` line added before the closing ---."""
-    if not fm_block or re.search(r"^lang:", fm_block, re.MULTILINE):
-        return fm_block
-    lines = fm_block.rstrip("\n").split("\n")  # [..., 'k: v', '---']
-    lines.insert(len(lines) - 1, f"lang: {lang}")
-    return "\n".join(lines) + "\n"
-
-
-def _verify_translation(english: str, translated: str) -> list[str]:
-    """Cheap structural checks for the classic translation failures: a dropped source,
-    a mangled table, a lost section. Warnings only — never blocks the save."""
-    warnings: list[str] = []
-    url_re = r"https?://[^\s)\]]+"
-    en_urls, zh_urls = re.findall(url_re, english), re.findall(url_re, translated)
-    if len(en_urls) != len(zh_urls):
-        warnings.append(f"source URL count differs: English {len(en_urls)} vs translated {len(zh_urls)}")
-    missing = set(en_urls) - set(zh_urls)
-    if missing:
-        warnings.append(f"{len(missing)} source URL(s) missing from translation, e.g. {sorted(missing)[0]}")
-
-    def rows(t: str) -> int:
-        return sum(1 for ln in t.splitlines() if ln.lstrip().startswith("|"))
-
-    def heads(t: str) -> int:
-        return sum(1 for ln in t.splitlines() if re.match(r"#{1,6}\s", ln))
-
-    if rows(english) != rows(translated):
-        warnings.append(f"table row count differs: English {rows(english)} vs translated {rows(translated)}")
-    if heads(english) != heads(translated):
-        warnings.append(f"heading count differs: English {heads(english)} vs translated {heads(translated)}")
-    return warnings
-
-
-def _translate_file(client: OpenAI, path: Path, lang: str) -> Path:
-    """Translate an existing English report, writing a sibling `<name>.<lang>.md`."""
-    if path.name.endswith(f".{lang}.md"):
-        typer.echo(f"{path.name} is already a .{lang}.md file; skipping.", err=True)
-        return path
-    text = path.read_text(encoding="utf-8")
-    fm_block, body = _split_frontmatter(text)
-    typer.echo(f"\nTranslating {path.name} -> {lang} ...\n", err=True)
-    zh_body = _strip_preamble(_translate_text(client, body, lang))
-    for w in _verify_translation(body, zh_body):
-        typer.echo(f"  [translation check] {w}", err=True)
-    out_text = _frontmatter_with_lang(fm_block, lang)
-    out_text += ("\n" if fm_block else "") + zh_body.lstrip("\n")
-    if not out_text.endswith("\n"):
-        out_text += "\n"
-    out_path = path.with_suffix(f".{lang}.md")
-    out_path.write_text(out_text, encoding="utf-8")
-    typer.echo(f"\nSaved: {out_path}", err=True)
-    return out_path
+def _lang_instruction(lang: str) -> str:
+    """Returns the additional system-prompt block for the requested output
+    language. Empty for English (so the prompt cache stays warm on the
+    common case); a discipline-preserving block for Chinese."""
+    if lang == "zh":
+        return _LANG_INSTRUCTION_ZH
+    return ""
 
 
 # ---------- Commands ----------
@@ -1658,12 +1690,22 @@ def research(
     ticker: str = typer.Argument(..., help="Stock ticker, e.g. RBLX"),
     question: str = typer.Argument(..., help="Research question in quotes"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print each tool call"),
-    translate: str = typer.Option(None, "--translate", help="Also save a translated copy, e.g. 'zh'"),
+    lang: str = typer.Option(
+        "en", "--lang", "-l",
+        help=f"Output language: {' | '.join(LANG_NAMES)} (default: en)",
+    ),
+    model: str = typer.Option(
+        DEFAULT_MODEL, "--model", "-m",
+        help=f"Model: {' | '.join(MODELS)} (default: {DEFAULT_MODEL})",
+    ),
 ):
     """Research a public company and produce a sourced brief."""
-    client, tavily = _setup_clients()
+    if lang not in LANG_NAMES:
+        typer.echo(f"Unknown lang '{lang}'. Supported: {', '.join(LANG_NAMES)}", err=True)
+        raise typer.Exit(1)
+    client, tavily, model_cfg = _setup_clients(model)
     today = datetime.date.today().strftime("%B %d, %Y")
-    system_prompt = RESEARCH_SYSTEM_PROMPT_TEMPLATE.format(today=today)
+    system_prompt = RESEARCH_SYSTEM_PROMPT_TEMPLATE.format(today=today) + _lang_instruction(lang)
 
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
@@ -1671,7 +1713,8 @@ def research(
     ]
 
     output, tool_calls_used = agentic_loop(
-        client, tavily, messages, RESEARCH_TOOLS, RESEARCH_MAX_TOOL_CALLS, verbose
+        client, tavily, messages, RESEARCH_TOOLS, RESEARCH_MAX_TOOL_CALLS, verbose,
+        model_cfg=model_cfg,
     )
 
     # Hard zero-tool-calls guard: a research brief produced without ANY search
@@ -1690,31 +1733,40 @@ def research(
         raise typer.Exit(1)
 
     saved = _save(
-        _briefs_dir_for(question),
+        _briefs_dir_for(lang),
         ticker,
         _slug(question),
         {
             "ticker": ticker.upper(),
             "question": question,
             "date": datetime.date.today().strftime("%Y-%m-%d"),
-            "model": MODEL,
+            "lang": lang,
+            "model": model_cfg["id"],
         },
         output,
     )
-    if translate:
-        _translate_file(client, saved, translate)
 
 
 @app.command()
 def initiate(
     ticker: str = typer.Argument(..., help="Stock ticker, e.g. RBLX"),
     verbose: bool = typer.Option(False, "--verbose", "-v", help="Print each tool call"),
-    translate: str = typer.Option(None, "--translate", help="Also save a translated copy, e.g. 'zh'"),
+    lang: str = typer.Option(
+        "en", "--lang", "-l",
+        help=f"Output language: {' | '.join(LANG_NAMES)} (default: en)",
+    ),
+    model: str = typer.Option(
+        DEFAULT_MODEL, "--model", "-m",
+        help=f"Model: {' | '.join(MODELS)} (default: {DEFAULT_MODEL})",
+    ),
 ):
     """Produce a deep-dive initiation report on a public company."""
-    client, tavily = _setup_clients()
+    if lang not in LANG_NAMES:
+        typer.echo(f"Unknown lang '{lang}'. Supported: {', '.join(LANG_NAMES)}", err=True)
+        raise typer.Exit(1)
+    client, tavily, model_cfg = _setup_clients(model)
     today = datetime.date.today().strftime("%B %d, %Y")
-    system_prompt = INITIATE_SYSTEM_PROMPT_TEMPLATE.format(today=today)
+    system_prompt = INITIATE_SYSTEM_PROMPT_TEMPLATE.format(today=today) + _lang_instruction(lang)
 
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
@@ -1727,7 +1779,8 @@ def initiate(
     messages.extend(_prefetch_subject_docs(ticker))
 
     output, _ = agentic_loop(
-        client, tavily, messages, INITIATE_TOOLS, INITIATE_MAX_TOOL_CALLS, verbose
+        client, tavily, messages, INITIATE_TOOLS, INITIATE_MAX_TOOL_CALLS, verbose,
+        model_cfg=model_cfg,
     )
 
     # Phase 4: code-side review + targeted revision (only when findings exist).
@@ -1736,7 +1789,7 @@ def initiate(
     findings = _review_draft(output, ticker, datetime.date.today())
     _log_review(findings)
     if findings:
-        output = _revise_draft(client, messages, output, findings, ticker)
+        output = _revise_draft(client, messages, output, findings, ticker, model_cfg=model_cfg)
 
     saved = _save(
         REPORTS_DIR,
@@ -1746,28 +1799,11 @@ def initiate(
             "ticker": ticker.upper(),
             "report_type": "initiation",
             "date": datetime.date.today().strftime("%Y-%m-%d"),
-            "model": MODEL,
+            "lang": lang,
+            "model": model_cfg["id"],
         },
         output,
     )
-    if translate:
-        _translate_file(client, saved, translate)
-
-
-@app.command()
-def translate(
-    path: str = typer.Argument(..., help="Path to an existing English report (.md)"),
-    lang: str = typer.Option("zh", "--lang", "-l", help="Target language code (currently: zh)"),
-):
-    """Translate an existing report into another language; keeps the English original."""
-    report = Path(path)
-    if not report.is_file():
-        typer.echo(f"File not found: {report}", err=True)
-        raise typer.Exit(1)
-    if lang not in TRANSLATE_LANG_NAMES:
-        typer.echo(f"Language '{lang}' has no tuned glossary; supported: {', '.join(TRANSLATE_LANG_NAMES)}", err=True)
-    client = _moonshot_client()
-    _translate_file(client, report, lang)
 
 
 if __name__ == "__main__":

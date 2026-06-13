@@ -27,6 +27,13 @@
               bindinput="onQuestion"
               value="{{question}}" />
 
+    <view class="label">输出语言</view>
+    <view class="lang-toggle">
+      <view class="opt {{lang === 'zh' ? 'on' : ''}}" data-lang="zh" bindtap="onLang">中文</view>
+      <view class="opt {{lang === 'en' ? 'on' : ''}}" data-lang="en" bindtap="onLang">English</view>
+    </view>
+    <view class="hint hint-left" wx:if="{{langAuto}}">已根据问题语言自动选择,可点击切换</view>
+
     <button class="primary" bindtap="submit" disabled="{{submitting}}">
       {{submitting ? '提交中…' : '提交'}}
     </button>
