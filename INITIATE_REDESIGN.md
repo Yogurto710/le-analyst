@@ -1,6 +1,6 @@
 # Initiate redesign — draft outline
 
-**Status:** draft v0 for review. Not implemented yet.
+**Status:** decisions locked, ready for implementation. Not yet coded.
 
 **Goal:** repurpose `analyst initiate TICKER` from the current 5,000-word
 sell-side-style long form into a retail-shaped ~1,200-word thesis brief.
@@ -37,16 +37,19 @@ Mandatory. Single paragraph, no sub-bullets. Three required beats:
   boilerplate description).
 - **Why it matters right now** (1-2 sentences — the catalyst window, the
   re-rating in progress, the news cycle the reader is in).
-- **The one number that decides the debate** (1 sentence — e.g. "if AI
-  semi revenue hits $10B in FY27 the bull case works; if it slips below
-  $8B the multiple compresses").
+- **The one number to watch from the next quarterly print** (1 sentence —
+  e.g. "Q2 FY27 AI semi revenue: bulls want $11B+, bears flag anything
+  below $9.5B"). Catalyst-shaped, not thesis-shaped: gives the reader a
+  concrete bullish/bearish signal threshold to track on a specific
+  upcoming event.
 
 **Structural rules:**
 - No buy/sell/hold phrasing, no dollar price target (existing CLAUDE.md
   rules apply harder here than anywhere else because the thesis is what
   retail readers anchor on).
-- The "one number" must reappear in section 4 (Bull/Bear/Base) as a
-  threshold that distinguishes the cases. Validator-able later.
+- The "one number" must reappear in section 6 (Catalyst Calendar) as
+  the bullish/bearish signal threshold on the relevant earnings event,
+  so the reader can re-find it during the actual quarter.
 - No citations in the thesis paragraph itself — it's a synthesis layer.
   All facts cited in their respective downstream sections.
 
@@ -68,10 +71,27 @@ Three sentences, then a five-column numbers table.
 Volume, Short Interest, EPS LTM, EPS Fwd, P/E LTM, etc.) — full row
 moves to appendix or a "more numbers" disclosure.
 
-### 3. What the Street is debating (~300 words)
+### 3. What the Street thinks (~400 words)
 
-**Purpose:** merges the old Sell-Side Q&A Analysis + Key Debates into
-one cohesive section. Three items, in this format:
+Merges three things that used to live separately and were really one
+flow: forward consensus estimates, the gap to management guidance, and
+the three debates the Street is actively having. Anchoring the debates
+on the consensus numbers grounds them in concrete expectations rather
+than leaving them to read as abstract pro/con bullet points.
+
+**3a. Street consensus (compact table + 1-2 sentence gap commentary)**
+
+| | FY+1E | FY+2E |
+|---|---|---|
+| Revenue | $X.XB (+XX% YoY) | $X.XB (+XX% YoY) |
+| EPS | $X.XX | $X.XX |
+
+Footnote line: analyst count + as-of date + source. One footnote
+sentence: "Consensus assumes [the load-bearing assumption]; management
+guided to [midpoint] which implies [Y% vs consensus]." If the gap is
+material (>5%), name the direction (Street ahead / behind).
+
+**3b. Three debates** — each in this format:
 
 ```
 ### Debate 1: [one-sentence statement of the disagreement]
@@ -89,32 +109,39 @@ one cohesive section. Three items, in this format:
 3. Drawn from the latest earnings call Q&A topics — not invented to
    fill space.
 
-**What got dropped:** the existing Sell-Side Q&A Analysis section
+**What got dropped:** the standalone Sell-Side Q&A Analysis section
 (themed sub-blocks of "Probed by / Sharpest question / Management
 response / What it implies") was good analyst-grade work but redundant
-with Key Debates. The new format is one section, not two.
+with Key Debates. The standalone Forward Estimates section (with
+analyst-count and gap-commentary) is absorbed here where it does the
+most work.
 
 ### 4. Bull / Bear / Base (~250 words)
 
 **Purpose:** explicit, verifiable return math for three scenarios.
+Same shape as the current `initiate_legacy` Bull/Bear/Base — no
+probabilities, no anchor phrasing like "our base case." The case name
+is the label.
 
 Each case = 2-3 sentences, structured:
 
 ```
-### Bull (assumed probability: ~X%)
-[Multiple] × [EPS or Revenue assumption] = [implied % move]
+### Bull
+[Multiple] × [EPS or Revenue assumption] = [implied % move from current]
 [1-2 sentences explaining what has to be true for this case]
 ```
 
 **Hard rules for this section:**
-- Return math must be EXPLICIT and SHOWN (so C7 / future V-04 can verify
-  it; not "the stock could appreciate 30-50%" — the actual computation).
-- Bull return > base return > bear return (V-04).
-- Probabilities must sum to ~100%.
-- Any multiple referenced must exist in the appendix comp table OR be
-  explicitly sourced (V-04).
-- Holding the current forward multiple flat is fine as a base case —
-  but the assumption must be stated, not implicit.
+- Return math must be EXPLICIT and SHOWN (multiple × EPS = % move, not
+  "the stock could appreciate 30-50%" without the underlying math), so
+  future V-04 can verify the arithmetic actually computes the stated
+  direction.
+- Bull case and bear case get equal analytical rigor — don't signal which
+  side you favor.
+- No buy/sell/hold phrasing, no dollar price target. Direction expressed
+  as % range from multiple re-rating only (existing CLAUDE.md rule).
+- Multiples referenced must exist in the appendix Peer Comp Table or be
+  explicitly sourced.
 
 ### 5. Top 3 risks (~120 words)
 
@@ -144,29 +171,36 @@ in the old report and survives intact. Table:
 competitor announcements, and product/customer milestones. Thresholds
 must be numeric where possible.
 
-### 7. Appendix (collapsible / "show more" in mini-app, ~variable)
+### 7. Appendix (~variable, ~600-800 words)
 
-Everything from the old structure that's still load-bearing for the
-serious reader but doesn't fit the 90-second flow:
+The three load-bearing sections that survive the cut, in this order:
 
-- **Full numbers row** (Trading Snapshot's 11-column shape)
-- **Financial Summary** (prior FY / LFY / LTM table)
-- **Forward Estimates** (consensus FY+1 / FY+2 + management guidance +
-  gap commentary)
-- **Quality-of-Earnings notes** — compressed to one or two flags only
-  when they materially change the headline multiple (the standing
-  trigger rules in CLAUDE.md still apply).
-- **Peer Comp Table** (LTM + FY+1E + FY+2E EV/Rev and P/E columns,
-  2-yr Rev CAGR, peer Median row — same as today).
-- **Competitive Landscape** (Stated Position + Independent Evidence
-  table — same as today).
-- **Market Opportunity** (company TAM + independent TAM + implied
-  share + methodology caveat — same as today).
-- **Historical Context** (multi-year price/multiple cycle).
+1. **Financial Summary** — prior FY / LFY / LTM table. Anchors the
+   company's financial baseline (revenue, gross margin, EBITDA margin,
+   operating margin, net income, EPS, FCF). Trailing only — forward
+   numbers live in Section 3.
+2. **Competitive Landscape** — Stated Position + Independent Evidence
+   table (same as today). Positions the company against named
+   competitors.
+3. **Peer Comp Table** — LTM + FY+1E + FY+2E EV/Rev and P/E columns,
+   2-yr Rev CAGR, peer Median row (same as today's shape; C3 enforces
+   median treatment when <3 peers have valid values).
 
-In the CLI output, the appendix appears as `## Appendix` with H3
-subsections inside. The mini-app renders it as a collapsible "查看更多 /
-Show full report" block after the catalyst calendar.
+The "narrowing zoom" logic: baseline financials → who they compete
+against → how they're valued vs those competitors. Anything outside
+this trio that the reader needs lives elsewhere in the report:
+- Forward Estimates → Section 3 (where the debates actually use them)
+- Headline trading multiples → Section 2 compact numbers row
+- TAM / Market Opportunity → Section 1 thesis (one sentence)
+- QoE flags → inline in Section 2 if any trigger ("FY26 GAAP includes
+  $1.8B one-time gain; ex-gain forward P/E ~50x"), not a section
+- Historical Context, full Trading Snapshot row, standalone Investment
+  Framework header → dropped entirely
+
+In the CLI output the appendix appears as `## Appendix` with H3
+subsections. The mini-app can render it inline below the catalyst
+calendar; collapsibility ("查看更多 / Show full report" toggle) is
+deferred to a later UI pass.
 
 ### 8. Sources (kept, ~variable)
 
@@ -180,18 +214,19 @@ with a real URL (C7 enforces).
 
 | Old section | New location |
 |---|---|
-| Trading Snapshot (11 columns) | Section 2 (compact) + Appendix (full) |
+| Trading Snapshot (11 columns) | Section 2 (5-col compact) — full row dropped |
 | Business Overview (~250 words) | Section 1 thesis + Section 2 (3 sentences) |
-| Financial Profile / Financial Summary | Appendix |
-| Financial Profile / Forward Estimates | Appendix |
-| Financial Profile / QoE Notes | Appendix (compressed to flags only) |
-| Sell-Side Q&A Analysis (~500 words) | Merged into Section 3 (debates) |
-| Market Opportunity (~180 words) | Section 1 thesis (one sentence) + Appendix |
-| Competitive Landscape | Appendix |
-| Valuation Context (~variable) | Section 4 (return math) + Appendix (comp table) |
+| Financial Profile / Financial Summary | Appendix (item 1) |
+| Financial Profile / Forward Estimates | **Section 3a** (anchors the debates) |
+| Financial Profile / QoE Notes | Inline flag in Section 2 if triggered — no section |
+| Sell-Side Q&A Analysis (~500 words) | Merged into Section 3b (debates) |
+| Market Opportunity (~180 words) | Section 1 thesis (one sentence) — full block dropped |
+| Competitive Landscape | Appendix (item 2) |
+| Valuation Context | Section 4 (return math) + Appendix Peer Comp Table |
 | Key Risks (5 risks ~30 words each) | Section 5 (3 risks) |
-| Investment Framework | Sections 1 + 3 + 4 (split across thesis, debates, scenarios) |
-| Open Questions | NOT in user-facing output — routed to validator metadata only |
+| Investment Framework (header) | **Header dropped** — discipline propagates through Sections 1, 3, 4 |
+| Open Questions | YAML frontmatter `open_questions:` list, not in rendered body |
+| Historical Context | Dropped entirely |
 | Sources | Section 8 (unchanged shape) |
 
 **Most significant decision:** Open Questions section is removed from the
@@ -208,14 +243,21 @@ encounters it on page 1 of their first interaction. Internal validators
    ~3,500-word sell-side shape as a fallback. Same code, same prompt,
    same Phase 4 checks. Available via `analyst initiate_legacy MRVL`.
 2. **New `initiate` command** with the structure above.
-   - Tool budget: ~50 calls (vs 95 today). The deeper sections (peer
-     comps, full financial summary, TAM) still get gathered for the
-     appendix, but the synthesis layer is lighter.
-   - Phase 4 reviewer: C1-C7 mostly applicable. C5 (required sections)
-     needs updating to the new section list. C4 (forward valuation lens)
-     applies to Section 2. C7 applies as today.
+   - Tool budget: ~50 calls (vs 95 today). Three appendix sections
+     (Financial Summary, Competitive Landscape, Peer Comp Table) still
+     get the per-peer gather work, but TAM / historical context / full
+     trading snapshot no longer cost calls.
+   - Phase 4 reviewer: C1-C7 mostly applicable, with two adjustments:
+     - **C5 required-sections list updates** to: Thesis, Business
+       snapshot, What the Street thinks, Bull / Bear / Base, Top 3 risks,
+       Catalyst calendar, Appendix, Sources (8 sections, not 11).
+     - **C4 forward valuation lens** now operates against Section 2's
+       compact numbers row + Section 3a's consensus table.
+     - C7 (citation completeness), C6 (gross ≥ EBITDA margin), C3 (peer
+       median treatment), C1 (LFY year stamp) all apply unchanged.
    - New prompt template: `INITIATE_SYSTEM_PROMPT_TEMPLATE` rewritten
-     for the new shape.
+     for the new shape. `initiate_legacy` keeps the current template
+     verbatim — easy revert path.
 3. **Mini-app submit page:** ticker-only (no question textarea) for the
    default flow → `initiate`. If user expands "ask a specific question"
    → falls back to `research`. Decision deferred until v0 brief output
@@ -227,34 +269,29 @@ encounters it on page 1 of their first interaction. Internal validators
 
 ---
 
-## Open design questions for review
+## Decisions locked in
 
-1. **Section 1 "one number that decides the debate"** — is this the right
-   load-bearing element? Alternative: "the one number to watch from the
-   next quarterly print." The first is thesis-anchoring, the second is
-   catalyst-anchoring. Pick one.
-2. **Section 4 explicit probabilities** — should probabilities be
-   numeric ("Bull: ~25%") or qualitative ("plausible / our base /
-   downside")? Numeric is V-04-checkable and reads decisively; qualitative
-   avoids false precision.
-3. **Section 7 Appendix in mini-app** — collapsible "show full" feels
-   right but adds UI work. Acceptable to ship v0 without it (appendix
-   just shows below the catalyst calendar, no toggle) and add the
-   collapse later? My vote: yes.
-4. **Investment Framework section name vanishes** — the discipline (no
-   buy/sell/hold, no $ PT, equal rigor on bull/bear) propagates through
-   sections 1, 3, 4. Do we lose any structural enforcement by removing
-   the section header? My read: no, but worth confirming.
-5. **Open Questions sink** — agreed it doesn't ship to users. But where
-   does the model emit it for validator consumption? Options: (a) inside
-   a `<!-- internal -->` HTML comment block stripped before save; (b) in
-   a separate metadata field in YAML frontmatter; (c) the model just
-   prints it to stderr/log. My vote: (b), but minimal infrastructure
-   either way.
-6. **Research command stays as-is** — the question-driven brief
-   (`research TICKER "Q"`) is still useful for "why did AVGO drop today"
-   reactive use. The mini-app keeps it as a "ask a specific question"
-   path alongside the default initiate. Agreed?
+1. **Section 1 anchor:** "the one number to watch from the next quarterly
+   print" — catalyst-shaped, not thesis-shaped. Reappears in Section 6
+   so the reader can find it during the actual quarter.
+2. **Section 4 probabilities:** none. Same shape as `initiate_legacy`'s
+   Bull/Bear/Base — case name is the label, equal rigor on bull vs bear,
+   direction expressed as % range from multiple re-rating only.
+3. **Section 7 Appendix:** three items (Financial Summary →
+   Competitive Landscape → Peer Comp Table). Mini-app renders inline
+   below catalyst calendar in v0; collapsible toggle deferred.
+4. **Investment Framework header:** dropped. Discipline (no buy/sell/hold,
+   no $ price target, equal rigor) propagates through Sections 1, 3, 4
+   without needing the section label.
+5. **Three risks**, not five.
+6. **Open Questions sink:** YAML frontmatter `open_questions:` list.
+   Stripped from rendered body before save. Future validators can parse.
+7. **`research` command stays separate.** Mini-app keeps both paths: ticker
+   alone → `initiate` (default, thesis-driven); ticker + question →
+   `research` (reactive question-driven).
+8. **Forward Estimates moves to Section 3** (was previously in Appendix).
+   Anchors the Street debates with the concrete consensus numbers they
+   pivot on.
 
 ---
 
