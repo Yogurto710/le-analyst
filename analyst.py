@@ -64,7 +64,13 @@ MODELS = {
 }
 DEFAULT_MODEL = "kimi"
 RESEARCH_MAX_TOOL_CALLS = 30
-INITIATE_MAX_TOOL_CALLS = 95  # +10 vs original: +5 for subject consensus, +5 for per-peer consensus that powers the forward peer comp table
+# New thesis-shaped initiate (8 sections, ~1,300 words core). Tool budget
+# halved vs legacy because TAM-search, historical-multiple-search, and
+# the long-form Sell-Side Q&A scaffold no longer drive Phase 1 fetches.
+INITIATE_MAX_TOOL_CALLS = 50
+# Legacy 11-section sell-side initiation kept as `initiate_legacy` for
+# fallback / A/B comparison. Same tool budget as the original.
+INITIATE_LEGACY_MAX_TOOL_CALLS = 95
 PHASE2_REPL_CAP = 3  # python_repl calls per initiate run; enforced in agentic_loop so the model can't iterate past it
 FETCH_CHAR_LIMIT = 10000  # default for news/Yahoo/blogs (mostly nav cruft after trafilatura strip)
 TRANSCRIPT_FETCH_CHAR_LIMIT = 50000  # earnings calls — Q&A often holds the highest-impact content
@@ -111,7 +117,7 @@ Rules:
 - Do not include internal reasoning or process commentary in the output (e.g. "Now I have enough information...", "Let me search for...", "Based on my research..."). The brief is the only output — start directly with the # heading.
 """
 
-INITIATE_SYSTEM_PROMPT_TEMPLATE = """You are a senior equity research analyst producing a deep-dive initiation report on a public company.
+INITIATE_LEGACY_SYSTEM_PROMPT_TEMPLATE = """You are a senior equity research analyst producing a deep-dive initiation report on a public company.
 
 Today's date is {today}.
 
@@ -424,6 +430,262 @@ Rules:
 - Be explicit about what you couldn't verify in Open Questions — gaps are more useful than guesses.
 - Do not include internal reasoning or process commentary in the output (e.g. "Now I have enough information...", "Let me compute..."). Start directly with the # heading.
 """
+
+
+# ----- NEW initiate prompt: thesis-shaped, 8 sections, ~1,300 words core -----
+#
+# This template replaces the long-form sell-side initiation as the
+# default behavior of `analyst initiate`. The legacy template above is
+# preserved as `analyst initiate_legacy` for fallback / A/B work.
+#
+# Phase 1 (gather) keeps most of the legacy data-collection contract
+# because the new appendix still has Financial Summary + Competitive
+# Landscape + Peer Comp Table — the data still has to be gathered. What
+# changes is the synthesis layer in Phase 3: fewer sections, tighter
+# word budgets, thesis at top, Forward Estimates moved into the Street-
+# debates section, retail-readable flow.
+INITIATE_SYSTEM_PROMPT_TEMPLATE = """You are a senior equity research analyst producing a thesis-shaped initiation brief on a public company. Today is {today}.
+
+The reader is a retail investor scanning on a phone — ~90 seconds to decide whether to keep reading or move on. Lead with the thesis. The analytical heavy lifting (peer comps, financial summary, competitive landscape) lives in the Appendix at the bottom; the core 6 sections at the top tell the story.
+
+==============================================================
+PHASE 1 — Gather (use ONLY web_search, fetch_url, edgar_search, edgar_fetch)
+==============================================================
+
+You will be given subject-company foundations (10-K / 20-F / 10-Q / 6-K listings + Yahoo quote / financials / analysis / key-statistics) PRE-FETCHED before this loop begins. Treat those as your starting context. Then gather:
+
+1. SUBJECT 10-K Item 1 (business description), Item 1A (risk factors), and MD&A. For US issuers: fetch the most recent 10-K via edgar_fetch with item="1", item="1A", and item="7". For foreign private issuers (NTES, BILI, KWS, etc.), use the 20-F equivalents — item="3.D" maps to Item 1A risks, item="4" to business description, item="5" to MD&A.
+
+2. SUBJECT latest earnings call transcript — search "{{ticker}} earnings call transcript Q[N] {{year}}". Prefer Motley Fool, Seeking Alpha (with text excerpt), or the company's IR webcast page. Pull both prepared remarks AND analyst Q&A — the Q&A is what drives the "What the Street thinks" section below.
+
+3. SUBJECT recent earnings press release / 6-K for the most recent completed quarter (and the most recent completed fiscal year if not yet in a 10-K / 20-F). Numbers from press releases / 6-Ks are valid for the LFY column when the annual filing hasn't dropped yet — see the LFY HARD RULE in step 11.
+
+4. PEER SELECTION. Identify 4-6 publicly traded peers — direct competitors, not adjacent-industry comparisons. For each peer, gather (from a SINGLE source per peer for consistency):
+
+   **US-LISTED PEERS (default) → Yahoo Finance.** For each US-listed peer:
+   - Market cap, EV, share price → https://finance.yahoo.com/quote/{{ticker}}/key-statistics/
+   - LFY and LTM revenue, gross profit, EBITDA, net income, FCF, diluted EPS → https://finance.yahoo.com/quote/{{ticker}}/financials/ (annual column for LFY; TTM column for LTM)
+   - FY+1E and FY+2E consensus revenue and EPS → https://finance.yahoo.com/quote/{{ticker}}/analysis/
+
+   **HK-LISTED PEERS → stockanalysis.com.** Yahoo's HK pages return 404 for financials/analysis.
+   - Quote: https://stockanalysis.com/quote/hkg/{{code}}/
+   - Financials: https://stockanalysis.com/quote/hkg/{{code}}/financials/
+   - Forecast: https://stockanalysis.com/quote/hkg/{{code}}/forecast/ (FY+1 forward EPS only; mark FY+2 P/E as "NM" — the median rule handles this)
+
+   **MIXED BASKET:** Yahoo for US-listed members, stockanalysis.com for HK-listed. Footnote the source split below the Peer Comp Table — labelled split, not silent mixing.
+
+   Run a DEDICATED fetch per peer. If a figure is missing, mark "NM" and move on — don't burn 3+ searches chasing one peer.
+
+5. COMPETITOR SCALE METRICS for the Competitive Landscape table (Appendix). For each named competitor, one or two scale metrics: revenue, user count (DAU / MAU), or other metric the company is benchmarked on. ENTITY BINDING RULE: a number only belongs to a competitor if the sentence explicitly names that competitor as the subject. If the sentence is ambiguous, discard the number.
+
+   Source hierarchy: (1) competitor's own filings, (2) competitor's IR / press releases, (3) third-party estimates labelled as such (Sensor Tower, data.ai, Sacra). Private competitor financials are ALWAYS labelled estimated: "$6B estimated 2025 revenue (Sacra)", never bare.
+
+6. UPCOMING CATALYSTS over the next 6-12 months — next earnings date, investor day, conferences, product launches, regulatory deadlines, debt maturities, material competitor earnings with read-through. Search "{{company}} next earnings date {{year}}" and check the 10-K for any disclosed forward dates. (Wall Street consensus from step 7 anchors the catalyst thresholds.)
+
+7. WALL STREET CONSENSUS — the PRIMARY source for all forward estimates. Yahoo Finance analysis page is preferred. Pull, for the SUBJECT and EVERY peer: FY+1 and FY+2 consensus revenue, FY+1 and FY+2 consensus EPS, analyst count, source date. Record explicitly (e.g. "Yahoo Finance, 24 analysts, as of {today}"). If a peer's consensus is unavailable, mark "NM" and move on — don't burn searches.
+
+8. FISCAL CALENDAR + LTM SOURCING. Record the fiscal year-end month for the subject and every peer (companies with misaligned fiscal years can't be compared on LFY alone). Pull subject LTM revenue from Yahoo's TTM column. Pull current-FY completed-quarter revenues AND matching prior-FY quarter revenues so Phase 2 can run the LTM cross-check.
+
+LFY DEFINITION (HARD RULE): LFY = the MOST RECENT COMPLETED fiscal year. NOT "the most recent annual SEC filing." If FY2025 ended in Dec 2025 and the 20-F isn't due until April 2026, LFY is STILL FY2025 — pull the numbers from the press release / 6-K / earnings call. Showing `FY2023 | FY2024 | LTM` when LFY should be FY2025 is WRONG.
+
+PHASE 1 BUDGET DISCIPLINE: Aim to finish gathering in ~40 tool calls. Hard cap is 50.
+
+HARD STOP RULE — 2 attempts per data point: after TWO unsuccessful web_search + fetch_url tries for any specific number, STOP. Mark the data point "not disclosed" and add it to Open Questions. Do NOT try a third query with different phrasing or language. PRIMARY data (subject revenue / EPS / margins / price / 10-K) gets one extra attempt. SECONDARY data (peer detail beyond Yahoo baseline, specific transcript quotes) does not.
+
+==============================================================
+PHASE 2 — Compute derived metrics (use ONLY python_repl)
+==============================================================
+
+Once Phase 1 is complete, use python_repl AT MOST 3 TIMES TOTAL. Bundle all related computations. Print every value cleanly so you can quote it.
+
+First python_repl call MUST declare the LFY year stamp: print `LFY = FYxxxx` based on today's date and the company's fiscal year-end. This anchors the Phase 3 Financial Summary table (in the Appendix).
+
+For the subject company:
+- Revenue YoY growth (LFY vs prior FY); FCF margin; SBC as % of revenue; SBC-adjusted FCF and yield; Net cash position = total cash - total debt; EV/Revenue (LTM), forward EV/Revenue (FY+1, FY+2), forward EV/EBITDA (where applicable); P/E (LTM), forward P/E (FY+1, FY+2).
+- Forward EPS = Wall Street consensus EPS from Phase 1. If no consensus, "NM" — do NOT invent one.
+- P/E negative-EPS rule: any P/E where EPS is negative or zero is "NM".
+
+For each peer (and the subject for the comp-table row):
+- 2-year Revenue CAGR = (FY+2E revenue / LFY revenue) ^ (1/2) - 1.
+- EV/Revenue (LTM), EV/Revenue (FY+1E), EV/Revenue (FY+2E).
+- P/E (LTM), P/E (FY+1E), P/E (FY+2E). "NM" for any negative-EPS row.
+- MEDIAN row (HARD RULE): median of each column ACROSS PEERS ONLY (exclude subject). NEVER compute a median from fewer than 3 valid non-"NM" values — write "—" and footnote "insufficient peer coverage" if so. The median of two values is NOT a median.
+
+FISCAL BASIS RECONCILIATION:
+- Choose ONE revenue basis for the comp table — use LTM when fiscal years are misaligned. Label the basis in the column header.
+- Numerator period, denominator period, and printed multiple all share the same period.
+- For the subject, compute LTM and LFY revenue separately. If they differ by >15%, set a flag — show both and explain.
+
+SANITY-CHECK every computed figure:
+(a) EBITDA / Revenue <= Gross Margin (EBITDA can't exceed gross profit). If broken, recompute.
+(b) Margin ordering: Gross >= EBITDA >= Operating >= Net.
+(c) Annualization check: if you ever derive a forward by annualizing a single quarter, compare against Phase 1 consensus — if they diverge >20%, prefer the consensus.
+(d) Multiple reconciliation: forward EV/Rev must equal current EV / forward revenue. Print every multiple alongside its inputs.
+(e) LTM revenue cross-check vs filing-derived (LFY + current-FY stub - matching prior-FY stub). Tolerance ±2%. BASIS CONSISTENCY: prior-year stub MUST be the restated continuing-ops figure from the latest 10-Q, never the original-as-reported.
+
+PHASE 2 STOP RULE: After calling python_repl, you cannot call web_search, fetch_url, edgar_search, or edgar_fetch again. Fix bad inputs in the next python_repl call, not via more search. After at most 3 python_repl calls, proceed to Phase 3.
+
+==============================================================
+PHASE 3 — Write the brief (no tool calls)
+==============================================================
+
+Synthesize into the format below. Eight sections, in this order, with the word budgets shown. Total target ~1,300 words core. Start writing immediately with the # heading — no preamble.
+
+# [Ticker]: [Company name] — Initiation
+
+## Thesis
+~120 words. ONE paragraph, no sub-bullets, no [N] citations (the thesis is a synthesis layer; all facts cited downstream). Three required beats:
+
+1. **What the company is** — one sentence in plain language. Not the 10-K boilerplate.
+2. **Why it matters right now** — 1-2 sentences. The news cycle, the re-rating in progress, the catalyst window.
+3. **The one number to watch from the next quarterly print** — one sentence with a concrete bullish/bearish signal threshold tied to a specific upcoming earnings event. Example: "Q2 FY27 AI semi revenue: bulls want $11B+, bears flag anything below $9.5B."
+
+This number MUST reappear in Section 6 (Catalyst calendar) as the bullish/bearish signal on the relevant earnings row. The reader will look for it during the actual quarter.
+
+Hard rules: no buy/sell/hold phrasing, no dollar price target.
+
+## Business snapshot
+~150 words. Three sentences then a compact table.
+
+Three sentences on what the company does, who they sell to, and how they make money. Not marketing speak. Then a 5-column markdown table:
+
+| Price | Mkt Cap | 52W Range | [Forward Multiple] | 2-yr Rev CAGR |
+|---|---|---|---|---|
+| $XX.XX | $X.XB | $low - $high | XX.Xx | XX.X% |
+
+The "Forward Multiple" column is chosen by profitability: if the company is comfortably profitable (positive, non-erratic EPS), use Fwd P/E (FY+1E) with that exact column header. Otherwise use Fwd EV/Rev (FY+1E). Label the column header explicitly — never a bare "Fwd Multiple". The 2-yr Rev CAGR is the LFY → FY+2E figure computed in Phase 2.
+
+If the headline GAAP figures are materially distorted by a one-time item (gain on sale, restructuring charge, one-time tax benefit), add a single italicized flag below the table: *FY26 GAAP includes a $X.XB one-time gain on sale of [unit]; ex-gain Fwd P/E is ~XXx [N].* Skip the flag if no such item.
+
+## What the Street thinks
+~400 words. Opens with consensus expectations, then three debates.
+
+### Street consensus
+Two-column markdown table:
+
+| | FY+1E | FY+2E |
+|---|---|---|
+| Revenue | $X.XB (+XX% YoY) | $X.XB (+XX% YoY) |
+| Diluted EPS | $X.XX | $X.XX |
+
+Footnote line below: *Consensus from [source], [N] analysts, as of [date].*
+
+Then one or two sentences on consensus vs management guidance: "Consensus assumes [the load-bearing assumption]. Management guided to [midpoint] which implies the Street is [ahead / behind / in-line] by [Y%]." Name the direction when the gap is material (>5%). Skip the second sentence entirely if no guidance exists for the period.
+
+### Three debates
+Pick the three debates the Street is actively having on this name — drawn from the latest earnings-call Q&A AND from genuine analytical disagreements visible in the financials or competitive position. Do NOT manufacture. If only two genuine debates exist, write two.
+
+Selection criteria (priority order):
+1. Must actually move the stock — not management-style "execution risk" platitudes.
+2. Must have a specific resolving signal — a number, a disclosure, an event.
+3. Must reference data already gathered in Phase 1 (cite via [N]).
+
+Format each debate as:
+
+#### Debate N: [one-sentence statement of the disagreement]
+- **Bulls argue:** [one sentence with [N] citation]
+- **Bears argue:** [one sentence with [N] citation]
+- **What resolves it:** [one sentence — the specific number / disclosure / event the reader should watch]
+
+## Bull / Bear / Base
+~250 words. Three short paragraphs (2-3 sentences each). Equal analytical rigor on Bull vs Bear — do not signal which you favor. Each case opens with the explicit return math.
+
+### Bull
+[Multiple]x x [EPS or revenue assumption] = $[implied price] / [+/-XX%] from current.
+1-2 sentences on what must be true for this case to materialize, referencing data from Phase 1 / Phase 2.
+
+### Bear
+Same shape — [Multiple]x x [assumption] = $[implied price] / [+/-XX%].
+1-2 sentences on the conditions that produce it.
+
+### Base
+Same shape — typically [current consensus multiple] x [current FY+1E EPS] held flat = [+/-XX%].
+1-2 sentences on the continuation-of-current-trajectory case. Stating that the multiple holds flat is fine; it must be stated as the assumption.
+
+Hard rules:
+- Return math must be EXPLICIT and SHOWN. Not "could appreciate 30-50%" without the underlying computation.
+- No buy/sell/hold. No dollar price target as the headline — show the implied % move FROM the multiple math, not as a free-floating target.
+- Multiples referenced must exist in the Appendix Peer Comp Table OR be explicitly sourced.
+- Reference Phase 2 figures only; introduce no new unsourced numbers.
+
+## Top 3 risks
+~120 words. Exactly three risks. Each one bullet, 30-40 words.
+
+- **[Risk name]:** [what could happen, what it would do to the thesis, the threshold that would change the picture] [N]
+
+Selection: must address per-sector baseline checklist or consciously exclude:
+- Semis: TSMC / Taiwan concentration, US export controls, cycle / inventory, customer concentration, pricing erosion.
+- Platforms / consumer tech: regulatory (DSA / DMA / China data), user-engagement secular shift, content cost inflation.
+- Memory / commodity: cycle turn, supply build, contract-vs-spot mix.
+
+Three is the cap. If a fourth genuinely matters, raise the bar on which two stay.
+
+## Catalyst calendar
+~200 words. Time-ordered markdown table, 6-9 rows.
+
+| Date | Event | What to Watch | Bullish Signal | Bearish Signal |
+|---|---|---|---|---|
+
+- Sort chronologically.
+- "What to Watch" must name a specific metric or outcome — not "guidance" or "results".
+- Bullish / Bearish columns: concrete numeric thresholds anchored to consensus or guidance midpoint. Name the consensus number: "Bullish: revenue beats consensus of $X by >5%."
+- The Section 1 "one number to watch" MUST appear here as the Bullish / Bearish threshold on the next-quarterly-print row. The reader needs to find it back during the actual quarter.
+
+## Appendix
+Three subsections, in this order:
+
+### Financial Summary
+Trailing-only markdown table. Columns left to right: prior fiscal year | LFY | LTM.
+
+LFY HARD CHECK: LFY = most recent COMPLETED fiscal year. If today is on or after February of year N+1, LFY = FY-N. For a calendar-FY company in June 2026, LFY = FY2025. This is true regardless of whether the FY2025 annual filing has dropped — if FY2025 numbers are available via press release / 6-K only, use those and footnote the source. Showing `FY2023 | FY2024 | LTM` and skipping FY2025 is WRONG.
+
+Required rows: Revenue, Gross Profit (or Gross Margin %), Operating Income/Loss, Net Income/Loss, Adjusted EBITDA (if reported), Free Cash Flow, Diluted EPS. If the company reports segments, include a Revenue-by-Segment block within or immediately below.
+
+### Competitive Landscape
+Two parts. First, ~80 words on how the company describes its competitive position (10-K Item 1 + recent commentary). Then a markdown table:
+
+| Competitor | Scale Evidence | Assessment |
+|---|---|---|
+
+Hard rules:
+- Each row contains data about ONE entity only. Never put a sister-brand metric inside a row for a different competitor.
+- Cross-reference subject metrics against the 10-K — discard third-party numbers that contradict the filing.
+- Private competitor financials labelled estimated: "$6B estimated 2025 revenue (Sacra)".
+- Assessment column answers ONE question: "What does this competitor mean for the subject's investment thesis?" Do not restate scale metrics.
+
+### Peer Comp Table
+One-sentence rationale for peer selection. Then a markdown table with the subject in row 1, 4-6 peers below, Median row at bottom.
+
+Columns: Company | EV ($B) | Rev (basis, $B) | 2-yr Rev CAGR | EV/Rev (LTM) | EV/Rev (FY+1E) | EV/Rev (FY+2E) | P/E (LTM) | P/E (FY+1E) | P/E (FY+2E).
+
+- Single-period-per-column: the LTM column uses LTM revenue for every row; FY+1E uses FY+1E consensus revenue for every row; never mix periods within a column.
+- Label the Rev column header with its basis: "Rev (LTM, $B)" or "Rev (FY2025, $B)".
+- "NM" for any negative-EPS P/E or any cell where consensus isn't available.
+- Median row HARD RULE: <3 valid non-"NM" values → "—" with footnote "insufficient peer coverage". Never average two values and call it a median.
+
+One-line positioning note below the table: "Trades at X.Xx FY+1E [P/E or EV/Rev] vs peer median of Y.Yx; the discount / premium reflects [reason]." When subject LTM revenue differs from LFY by >15%, add the footnote showing both figures.
+
+## Open Questions
+What you couldn't find or verify. Bullet items, each one sentence. Be explicit about gaps — peer consensus you couldn't source, computations that failed for missing inputs, multiples that are approximations. Examples:
+- Peer consensus EPS for [Peer] was unavailable; row marked NM.
+- Short interest data not verified against settlement-date filing; approximate from Yahoo.
+
+This section gets stripped from the rendered report and moved into YAML frontmatter as machine-readable metadata. Reader-facing output never shows it. Still write it — it's load-bearing for downstream validators.
+
+## Sources
+Numbered list: [1] Title — Publication — Date — URL
+
+Every source line must end with the URL you actually fetched. Non-negotiable. SEC filings link to EDGAR. Earnings transcripts link to the page you read. Press releases link to the IR page.
+
+Rules summary across the whole brief:
+- Every non-obvious claim must have a [N] citation that resolves to a Sources entry.
+- All derived metrics and peer multiples are quoted from Phase 2 python_repl output.
+- Every markdown table includes the `|---|---|` separator row.
+- Never write "buy", "sell", "hold", or a dollar price target.
+- Bull and Bear case have equal analytical rigor.
+- Do not include process commentary in the output. Start directly with the # heading.
+"""
+
 
 RESEARCH_TOOLS = [
     {
@@ -1295,21 +1557,40 @@ def _check_c4_lens(draft: str) -> dict | None:
     return None
 
 
-def _check_c5_sections(draft: str) -> list[dict]:
-    """C5 — required H2 sections all present in the order they should appear."""
-    required = [
-        "Trading Snapshot",
-        "Business Overview",
-        "Financial Profile",
-        "Sell-Side Q&A Analysis",
-        "Market Opportunity",
-        "Competitive Landscape",
-        "Valuation Context",
-        "Key Risks",
-        "Investment Framework",
-        "Open Questions",
-        "Sources",
-    ]
+_REQUIRED_SECTIONS_NEW = [
+    "Thesis",
+    "Business snapshot",
+    "What the Street thinks",
+    "Bull / Bear / Base",
+    "Top 3 risks",
+    "Catalyst calendar",
+    "Appendix",
+    "Open Questions",
+    "Sources",
+]
+
+_REQUIRED_SECTIONS_LEGACY = [
+    "Trading Snapshot",
+    "Business Overview",
+    "Financial Profile",
+    "Sell-Side Q&A Analysis",
+    "Market Opportunity",
+    "Competitive Landscape",
+    "Valuation Context",
+    "Key Risks",
+    "Investment Framework",
+    "Open Questions",
+    "Sources",
+]
+
+
+def _check_c5_sections(draft: str, legacy: bool = False) -> list[dict]:
+    """C5 — required H2 sections all present. The required list depends
+    on which template produced the draft; legacy=True checks the
+    11-section sell-side layout, default checks the 8-section thesis
+    shape (plus Open Questions, which is emitted in the body and then
+    extracted to frontmatter post-review)."""
+    required = _REQUIRED_SECTIONS_LEGACY if legacy else _REQUIRED_SECTIONS_NEW
     findings = []
     for name in required:
         if f"## {name}" not in draft:
@@ -1435,20 +1716,37 @@ def _check_c7_citations(draft: str) -> list[dict]:
     return findings
 
 
-def _review_draft(draft: str, ticker: str, today: datetime.date) -> list[dict]:
-    """Run all C1-C7 checks against the draft. Returns a list of finding dicts.
-    Empty list = clean draft. Each finding has keys check_id, severity, fix."""
+def _review_draft(
+    draft: str,
+    ticker: str,
+    today: datetime.date,
+    legacy: bool = False,
+) -> list[dict]:
+    """Run Phase 4 checks against the draft. Returns a list of findings;
+    empty list = clean.
+
+    For the legacy 11-section initiation, all C1-C7 checks run — they were
+    tuned against that layout. For the new 8-section initiate, only the
+    shape-agnostic checks (C5 with the new section list, C7 citation
+    completeness) fire. C1-C4 and C6 were tuned to legacy headings
+    ("Trading Snapshot", "Financial Summary" as H2, "Forward Estimates"
+    as H3 inside Financial Profile) and would produce noise on the new
+    shape; they get re-added once we see what actually fails on the new
+    layout in production."""
     findings: list[dict] = []
-    c1 = _check_c1_lfy(draft, today)
-    if c1:
-        findings.append(c1)
-    findings.extend(_check_c2_snapshot_recon(draft))
-    findings.extend(_check_c3_peer_median(draft))
-    c4 = _check_c4_lens(draft)
-    if c4:
-        findings.append(c4)
-    findings.extend(_check_c5_sections(draft))
-    findings.extend(_check_c6_margin_sanity(draft))
+    if legacy:
+        c1 = _check_c1_lfy(draft, today)
+        if c1:
+            findings.append(c1)
+        findings.extend(_check_c2_snapshot_recon(draft))
+        findings.extend(_check_c3_peer_median(draft))
+        c4 = _check_c4_lens(draft)
+        if c4:
+            findings.append(c4)
+        findings.extend(_check_c5_sections(draft, legacy=True))
+        findings.extend(_check_c6_margin_sanity(draft))
+    else:
+        findings.extend(_check_c5_sections(draft, legacy=False))
     findings.extend(_check_c7_citations(draft))
     return findings
 
@@ -1587,17 +1885,58 @@ def _strip_preamble(content: str) -> str:
     return content[match.start():] if match else content
 
 
+def _fmt_frontmatter_value(v) -> str:
+    """YAML-render a frontmatter value. Lists become block-style with
+    quoted items so embedded colons / quotes survive a round-trip."""
+    if isinstance(v, list):
+        if not v:
+            return "[]"
+        lines = [""]
+        for item in v:
+            esc = str(item).replace('"', '\\"')
+            lines.append(f"  - \"{esc}\"")
+        return "\n".join(lines)
+    return str(v)
+
+
 def _save(directory: Path, ticker: str, slug: str, frontmatter: dict, content: str) -> Path:
     directory.mkdir(exist_ok=True)
     today = datetime.date.today()
     date_str = today.strftime("%Y%m%d")
     content = _strip_preamble(content)
-    fm_lines = ["---"] + [f"{k}: {v}" for k, v in frontmatter.items()] + ["---", ""]
+    fm_lines = (
+        ["---"]
+        + [f"{k}: {_fmt_frontmatter_value(v)}" for k, v in frontmatter.items()]
+        + ["---", ""]
+    )
     header = "\n".join(fm_lines) + "\n"
     filename = directory / f"{ticker.upper()}-{slug}-{date_str}.md"
     filename.write_text(header + content, encoding="utf-8")
     typer.echo(f"\nSaved: {filename}", err=True)
     return filename
+
+
+def _extract_open_questions(draft: str) -> tuple[list[str], str]:
+    """Pull the ## Open Questions section out of the Phase 3 draft, parse
+    bullet items into a list, and return (items, draft_without_section).
+    Used to route the model's data-gap confessions into YAML frontmatter
+    metadata instead of the reader-facing body."""
+    m = re.search(
+        r"\n## Open Questions\n(.*?)(?=\n## |\Z)",
+        draft, re.DOTALL,
+    )
+    if not m:
+        return [], draft
+    items: list[str] = []
+    for raw in m.group(1).splitlines():
+        line = raw.strip()
+        if line.startswith("- "):
+            # Strip leading "- " and any bold/markdown decoration
+            item = line[2:].strip()
+            item = re.sub(r"\*\*([^*]+)\*\*:?\s*", r"\1: ", item).strip()
+            items.append(item)
+    draft_without = draft[:m.start()] + draft[m.end():]
+    return items, draft_without
 
 
 # ---------- Setup helper ----------
@@ -1760,7 +2099,16 @@ def initiate(
         help=f"Model: {' | '.join(MODELS)} (default: {DEFAULT_MODEL})",
     ),
 ):
-    """Produce a deep-dive initiation report on a public company."""
+    """Produce a thesis-shaped initiation brief on a public company.
+
+    Eight sections, ~1,300 words core: thesis / business snapshot / what
+    the Street thinks (consensus + 3 debates) / Bull-Bear-Base / 3 risks
+    / catalyst calendar / appendix (Financial Summary + Competitive
+    Landscape + Peer Comp Table) / sources. See INITIATE_REDESIGN.md.
+
+    The pre-redesign 11-section sell-side initiation is preserved as
+    `initiate_legacy` for fallback / A/B comparison.
+    """
     if lang not in LANG_NAMES:
         typer.echo(f"Unknown lang '{lang}'. Supported: {', '.join(LANG_NAMES)}", err=True)
         raise typer.Exit(1)
@@ -1770,12 +2118,12 @@ def initiate(
 
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Ticker: {ticker}\n\nProduce an initiation report following the format above."},
+        {"role": "user", "content": f"Ticker: {ticker}\n\nProduce an initiation brief following the format above."},
     ]
 
     # Pre-fetch the deterministic subject-company foundations in parallel before
-    # the agent loop. Saves ~7 batches of inter-batch model thinking (~120-140s)
-    # at the cost of ~3-5s wall on the parallel fetch. See _prefetch_subject_docs.
+    # the agent loop. Same prefetch as legacy — the underlying data needs are
+    # similar even though the synthesis layer is much lighter.
     messages.extend(_prefetch_subject_docs(ticker))
 
     output, _ = agentic_loop(
@@ -1783,10 +2131,75 @@ def initiate(
         model_cfg=model_cfg,
     )
 
-    # Phase 4: code-side review + targeted revision (only when findings exist).
-    # Catches the categories of mistakes that prompt-side rules don't reliably
-    # prevent (LFY off-by-one being the canonical case). See _review_draft.
-    findings = _review_draft(output, ticker, datetime.date.today())
+    # Phase 4: only the shape-agnostic checks fire on the new template
+    # (C5 with the new 8-section list, C7 citation completeness). C1-C4
+    # and C6 were tuned to the legacy 11-section layout and would produce
+    # noise; they get re-added once we see what actually fails on the
+    # new shape in production runs.
+    findings = _review_draft(output, ticker, datetime.date.today(), legacy=False)
+    _log_review(findings)
+    if findings:
+        output = _revise_draft(client, messages, output, findings, ticker, model_cfg=model_cfg)
+
+    # Extract the ## Open Questions section into structured frontmatter
+    # metadata instead of shipping it to the reader.
+    open_questions, output = _extract_open_questions(output)
+
+    saved = _save(
+        REPORTS_DIR,
+        ticker,
+        "initiation",
+        {
+            "ticker": ticker.upper(),
+            "report_type": "initiation",
+            "date": datetime.date.today().strftime("%Y-%m-%d"),
+            "lang": lang,
+            "model": model_cfg["id"],
+            "open_questions": open_questions,
+        },
+        output,
+    )
+
+
+@app.command()
+def initiate_legacy(
+    ticker: str = typer.Argument(..., help="Stock ticker, e.g. RBLX"),
+    verbose: bool = typer.Option(False, "--verbose", "-v", help="Print each tool call"),
+    lang: str = typer.Option(
+        "en", "--lang", "-l",
+        help=f"Output language: {' | '.join(LANG_NAMES)} (default: en)",
+    ),
+    model: str = typer.Option(
+        DEFAULT_MODEL, "--model", "-m",
+        help=f"Model: {' | '.join(MODELS)} (default: {DEFAULT_MODEL})",
+    ),
+):
+    """Produce the pre-redesign 11-section sell-side initiation (fallback).
+
+    Preserves the original long-form analyst-grade output. Use `initiate`
+    (without the suffix) for the new thesis-shaped retail brief.
+    """
+    if lang not in LANG_NAMES:
+        typer.echo(f"Unknown lang '{lang}'. Supported: {', '.join(LANG_NAMES)}", err=True)
+        raise typer.Exit(1)
+    client, tavily, model_cfg = _setup_clients(model)
+    today = datetime.date.today().strftime("%B %d, %Y")
+    system_prompt = INITIATE_LEGACY_SYSTEM_PROMPT_TEMPLATE.format(today=today) + _lang_instruction(lang)
+
+    messages: list[dict] = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": f"Ticker: {ticker}\n\nProduce an initiation report following the format above."},
+    ]
+
+    messages.extend(_prefetch_subject_docs(ticker))
+
+    output, _ = agentic_loop(
+        client, tavily, messages, INITIATE_TOOLS, INITIATE_LEGACY_MAX_TOOL_CALLS, verbose,
+        model_cfg=model_cfg,
+    )
+
+    # Legacy shape: full C1-C7 review against the 11-section layout.
+    findings = _review_draft(output, ticker, datetime.date.today(), legacy=True)
     _log_review(findings)
     if findings:
         output = _revise_draft(client, messages, output, findings, ticker, model_cfg=model_cfg)
@@ -1797,7 +2210,7 @@ def initiate(
         "initiation",
         {
             "ticker": ticker.upper(),
-            "report_type": "initiation",
+            "report_type": "initiation-legacy",
             "date": datetime.date.today().strftime("%Y-%m-%d"),
             "lang": lang,
             "model": model_cfg["id"],
