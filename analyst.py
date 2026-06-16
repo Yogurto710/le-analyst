@@ -460,25 +460,37 @@ You will be given subject-company foundations (10-K / 20-F / 10-Q / 6-K listings
 
 3. SUBJECT recent earnings press release / 6-K for the most recent completed quarter (and the most recent completed fiscal year if not yet in a 10-K / 20-F). Numbers from press releases / 6-Ks are valid for the LFY column when the annual filing hasn't dropped yet — see the LFY HARD RULE in step 11.
 
-4. PEER SELECTION. Identify 4-6 publicly traded peers — direct competitors, not adjacent-industry comparisons. For each peer, gather (from a SINGLE source per peer for consistency):
+4. PEER SELECTION. Identify 4-6 publicly traded peers. **Peers must share the subject's end market AND have either similar revenue scale OR similar growth profile (2-yr CAGR within ~15 pp).** Adjacent-industry semis are NOT peers for an AI custom-silicon name; the test isn't "another large chip company" but "another large chip company doing the same job for the same customer set." If only 2-3 truly comparable peers exist, use those — a tight homogeneous basket is more useful than a wide heterogeneous one. (The peer median rule already protects against thin baskets: <3 valid values → "—".)
 
-   **US-LISTED PEERS (default) → Yahoo Finance.** For each US-listed peer:
-   - Market cap, EV, share price → https://finance.yahoo.com/quote/{{ticker}}/key-statistics/
-   - LFY and LTM revenue, gross profit, EBITDA, net income, FCF, diluted EPS → https://finance.yahoo.com/quote/{{ticker}}/financials/ (annual column for LFY; TTM column for LTM)
-   - FY+1E and FY+2E consensus revenue and EPS → https://finance.yahoo.com/quote/{{ticker}}/analysis/
+PEER & COMPETITOR DATA — HARD RULE (single source per ticker, no fallback to third-party aggregators):
 
-   **HK-LISTED PEERS → stockanalysis.com.** Yahoo's HK pages return 404 for financials/analysis.
+Every peer's AND every named competitor's market cap, EV, share price, share count, revenue (LTM / FY+1E / FY+2E), revenue growth, EPS (LTM / FY+1E / FY+2E), gross margin, operating margin, net income, and free cash flow MUST come from ONE of these sources only:
+
+   **US-LISTED peers/competitors → Yahoo Finance ONLY.** Three pages, same domain:
+   - Quote + key-statistics: https://finance.yahoo.com/quote/{{ticker}}/key-statistics/ (market cap, EV, share price, share count)
+   - Financials: https://finance.yahoo.com/quote/{{ticker}}/financials/ (annual column for LFY; TTM column for LTM revenue, gross profit, EBITDA, net income, FCF, diluted EPS)
+   - Analysis: https://finance.yahoo.com/quote/{{ticker}}/analysis/ (FY+1E and FY+2E consensus revenue and EPS, analyst count)
+
+   **HK-LISTED peers/competitors → stockanalysis.com ONLY.** (Yahoo's HK pages return 404 for financials/analysis.)
    - Quote: https://stockanalysis.com/quote/hkg/{{code}}/
    - Financials: https://stockanalysis.com/quote/hkg/{{code}}/financials/
-   - Forecast: https://stockanalysis.com/quote/hkg/{{code}}/forecast/ (FY+1 forward EPS only; mark FY+2 P/E as "NM" — the median rule handles this)
+   - Forecast: https://stockanalysis.com/quote/hkg/{{code}}/forecast/ (FY+1 forward EPS only; mark FY+2 P/E as "NM")
 
-   **MIXED BASKET:** Yahoo for US-listed members, stockanalysis.com for HK-listed. Footnote the source split below the Peer Comp Table — labelled split, not silent mixing.
+   **PRIVATE competitors** (Epic Games, Valve, etc.) → labelled estimates only, source named: "$6B estimated 2025 revenue (Sacra)", never bare. This is the ONLY allowed third-party source path.
 
-   Run a DEDICATED fetch per peer. If a figure is missing, mark "NM" and move on — don't burn 3+ searches chasing one peer.
+   **NO OTHER SOURCES** for peer/competitor financial figures. Do NOT use TIKR, GuruFocus, Macrotrends, BusinessQuant, Futurum, Forbes, blog posts, news articles, or your own triangulation for any peer's market cap, EV, revenue, EPS, margin, NI, or FCF.
 
-5. COMPETITOR SCALE METRICS for the Competitive Landscape table (Appendix). For each named competitor, one or two scale metrics: revenue, user count (DAU / MAU), or other metric the company is benchmarked on. ENTITY BINDING RULE: a number only belongs to a competitor if the sentence explicitly names that competitor as the subject. If the sentence is ambiguous, discard the number.
+   **Hard fallback for missing data:** if Yahoo Finance (or stockanalysis.com for HK) doesn't have a specific peer's specific data point, the cell is "NM". Do NOT fall back to other aggregators for that figure. NM is the only acceptable substitute. The Peer Comp Table median rule (<3 valid values → "—") handles thin coverage gracefully.
 
-   Source hierarchy: (1) competitor's own filings, (2) competitor's IR / press releases, (3) third-party estimates labelled as such (Sensor Tower, data.ai, Sacra). Private competitor financials are ALWAYS labelled estimated: "$6B estimated 2025 revenue (Sacra)", never bare.
+   **MIXED BASKET (US-listed + HK-listed peers):** Yahoo for US peers, stockanalysis.com for HK peers. Footnote the source split below the Peer Comp Table — labelled split, not silent mixing.
+
+   **Sourcing audit:** every peer row in the Peer Comp Table AND every competitor row in the Competitive Landscape table must trace to ONE source in the Sources section: the Yahoo Finance page for the ticker, the stockanalysis.com page for HK, or a labelled-estimate citation for private competitors. Do NOT cite TIKR / GuruFocus / news sites in support of any peer's financial figure.
+
+   **Why this rule is HARD:** prior runs had NVDA's single-quarter revenue mislabeled as TTM (60.5x EV/Rev vs real ~19.5x), AVGO showing as a peer-median outlier because AMD/QCOM figures came from heterogeneous sources, and AMD's P/E flagged as 140.6x with the model itself disclaiming the figure. All three were prevented by single-sourcing.
+
+5. COMPETITOR USER/SCALE METRICS for the Competitive Landscape Assessment column (Appendix). Non-financial scale evidence — user count (DAU / MAU), product count, market share — for context, not for the comp table. ENTITY BINDING RULE: a number only belongs to a competitor if the sentence explicitly names that competitor as the subject. If the sentence is ambiguous, discard the number.
+
+   Acceptable sources for non-financial scale: (1) competitor's own filings, (2) competitor's IR / press releases, (3) third-party estimates labelled as such (Sensor Tower, data.ai, Newzoo). Financial figures for the same competitors still follow the Yahoo / stockanalysis.com HARD RULE above.
 
 6. UPCOMING CATALYSTS over the next 6-12 months — next earnings date, investor day, conferences, product launches, regulatory deadlines, debt maturities, material competitor earnings with read-through. Search "{{company}} next earnings date {{year}}" and check the 10-K for any disclosed forward dates. (Wall Street consensus from step 7 anchors the catalyst thresholds.)
 
@@ -588,25 +600,27 @@ Format each debate as:
 - **What resolves it:** [one sentence — the specific number / disclosure / event the reader should watch]
 
 ## Bull / Bear / Base
-~250 words. Three short paragraphs (2-3 sentences each). Equal analytical rigor on Bull vs Bear — do not signal which you favor. Each case opens with the explicit return math.
+~350-400 words. Three paragraphs of ~100-120 words each. Equal analytical rigor on Bull vs Bear — do not signal which you favor. Each case follows the SAME four-beat structure:
 
-### Bull
-[Multiple]x x [EPS or revenue assumption] = $[implied price] / [+/-XX%] from current.
-1-2 sentences on what must be true for this case to materialize, referencing data from Phase 1 / Phase 2.
+```
+### [Bull / Bear / Base]
+1. Return math: [Multiple]x x [EPS or revenue assumption] = $[implied price] / [+/- XX%] from current. State the multiple's anchor (peer median / current forward held flat / historical reference).
+2. Conditions: 2-3 specific conditions that must hold, each with a [N] citation to a Phase 1 source. Reference the consensus expectation, management guidance, or stated company target this case depends on.
+3. Confirm trigger: name the SPECIFIC upcoming earnings disclosure or news event from Section 6 (Catalyst Calendar) that would confirm the case. Use the same metric threshold as the Catalyst Calendar row.
+4. Invalidate trigger: name the SPECIFIC disclosure that would invalidate the case. Symmetric with the confirm trigger.
+```
 
-### Bear
-Same shape — [Multiple]x x [assumption] = $[implied price] / [+/-XX%].
-1-2 sentences on the conditions that produce it.
+Worked example (for a hypothetical AI-semis name):
 
-### Base
-Same shape — typically [current consensus multiple] x [current FY+1E EPS] held flat = [+/-XX%].
-1-2 sentences on the continuation-of-current-trajectory case. Stating that the multiple holds flat is fine; it must be stated as the assumption.
+> **Bull**
+> 75x FY+2E EPS of $6.17 = $463 / +65% from current. The 75x multiple anchors to the peer median 33x FY+1E P/E plus a justified premium reflecting the company's 42% 2-yr revenue CAGR vs peer median 28% [3]. This case requires (a) FY+2 custom silicon revenue exceeding $10B (the company's stated long-term target [2]), (b) operating margin expanding to the 38-40% target as opex grows in the mid-teens while revenue compounds 45% YoY [2], and (c) Broadcom failing to win a major hyperscaler away during the FY+2 contract-renegotiation window [4]. **Confirmed if** Q2 FY27 data center revenue exceeds $2.1B (the Section 6 bullish threshold) and FY28 guidance issued at the Q4 print is maintained at $16.5B+. **Invalidated if** Q2 FY27 data center revenue falls below $1.9B or a major customer publicly switches a custom program to a competitor.
 
 Hard rules:
 - Return math must be EXPLICIT and SHOWN. Not "could appreciate 30-50%" without the underlying computation.
 - No buy/sell/hold. No dollar price target as the headline — show the implied % move FROM the multiple math, not as a free-floating target.
 - Multiples referenced must exist in the Appendix Peer Comp Table OR be explicitly sourced.
 - Reference Phase 2 figures only; introduce no new unsourced numbers.
+- The confirm and invalidate triggers must reference SPECIFIC rows of the Catalyst Calendar by event name (e.g., "Q2 FY27 earnings", "FY28 guidance update"). Generic triggers like "if growth slows" are not acceptable. The reader should be able to read a case, jump to the catalyst calendar, and know which row to watch.
 
 MULTIPLE ANCHORING RULE — every multiple in this section must cite WHY that level, drawn from the Appendix Peer Comp Table or historical context:
 - **Base case multiple** = current forward multiple held flat. State it as such ("69x FY+1E P/E, held flat from current").
@@ -1998,8 +2012,31 @@ def _revise_draft(
         "aren't affected by the listed issues, and do NOT introduce new sections. "
         "Preserve all original section headings, tables, sources, and analytical "
         "content that wasn't called out above.\n\n"
-        f"Output the full revised report starting with the \"# {ticker.upper()}: Initiation Report\" "
-        "heading. No preamble, no commentary — just the revised markdown."
+        "ACTION-DIRECTED FIXES (do this, do not just rewrite prose):\n"
+        "- **C8 EPS footing failure:** the loss-year EPS row is likely wrong by ~10x. "
+        "Recompute every column's EPS = Net Income / diluted shares using a SINGLE "
+        "share count (the one already used for market cap). Update the EPS row "
+        "directly — do not change the surrounding prose.\n"
+        "- **C9 peer outlier in EV/Rev (LTM):** the flagged peer is most likely a "
+        "single-quarter revenue mislabeled as TTM. EITHER (a) drop that peer from the "
+        "Peer Comp Table entirely (and from the Competitive Landscape table) and "
+        "remove the row's contribution to the median, OR (b) replace the row's LTM "
+        "revenue with a value that reconciles to the other forward multiples in the "
+        "same row (FY+1E revenue / (1 + LTM-to-FY+1 growth)). Recompute that row's "
+        "EV/Rev, P/E, and update the Median row. Do NOT just rewrite the positioning "
+        "note — the underlying number is wrong and the table must change.\n"
+        "- **C10 EBITDA basis mismatch:** state the EBITDA basis explicitly (GAAP vs "
+        "Adjusted; with vs without one-time items) in the Financial Summary table "
+        "footnote. If FY26 EBITDA excludes a one-time gain that NI includes, either "
+        "(a) restate EBITDA on the same basis as NI for that column, or (b) label "
+        "both rows with their basis so the reader sees they aren't comparable.\n"
+        "- **C7 citation missing/truncated:** add the missing source line(s) — Title "
+        "— Publication — Date — URL. Do not strip in-text [N] citations.\n"
+        "- **All other findings:** apply the fix as written. The reader should be "
+        "able to read the revised report and not find the originally-flagged issue.\n\n"
+        "Output the FULL revised report starting with the original `#` heading. No "
+        "preamble, no commentary, no \"here is the revised report\" prefix — just "
+        "the revised markdown beginning with `#`."
     )
 
     messages.append({"role": "assistant", "content": draft})
