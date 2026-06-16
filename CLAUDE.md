@@ -36,6 +36,11 @@ Phase 4 checks (in `_review_draft`):
 - **C5** All 11 required H2 sections present
 - **C6** Forward Estimates: gross margin ≥ EBITDA margin
 - **C7** Citation completeness: every `[N]` in body has a matching `[N]` source entry, no truncation (highest-indexed source must contain a URL), body must cite sources if substantive (>500 words). Catches the DeepSeek failure mode where the model emits a long uncited body, and the KM-07 off-by-one regression.
+- **C8** EPS footing (new shape only): for each Financial Summary column, recompute implied diluted share count = Net Income / |Diluted EPS|; flag if max/min spread across columns >1.5x. Catches the 10x-EPS-error class observed on MRVL 2026-06-15 v0 (FY24 NI $0.39B with EPS $0.05 implies 7,800M shares vs the real ~865M).
+- **C9** Peer Comp Table LTM outlier (new shape only): flag any peer where `EV/Rev (LTM)` is more than 2x the peer median. The common cause is a single-quarter revenue value mislabeled as TTM (NVDA at 60.5x EV/Rev because $81.6B was Q1 FY27 single-quarter, not real TTM ~$253B).
+- **C10** EBITDA basis (new shape only): for each Financial Summary column, assert EBITDA > Net Income (NI > 95% of EBITDA is structurally implausible). Catches basis mismatches where NI includes a one-time gain that adjusted EBITDA excludes.
+
+The legacy 11-section `initiate_legacy` command runs only C1-C7 (those were tuned to the legacy layout). The new 8-section `initiate` runs C5+C7 PLUS C8/C9/C10, which parse the new Financial Summary / Peer Comp Table layout inside Appendix at H3.
 
 The revision is a single model call with `_revise_draft`. If it comes back too short (<70% of draft) or drops section headings, we fall back to the draft and log the failure to stderr.
 

@@ -608,6 +608,12 @@ Hard rules:
 - Multiples referenced must exist in the Appendix Peer Comp Table OR be explicitly sourced.
 - Reference Phase 2 figures only; introduce no new unsourced numbers.
 
+MULTIPLE ANCHORING RULE — every multiple in this section must cite WHY that level, drawn from the Appendix Peer Comp Table or historical context:
+- **Base case multiple** = current forward multiple held flat. State it as such ("69x FY+1E P/E, held flat from current").
+- **Bull case multiple** = peer-median forward multiple PLUS a justified premium for differentiated growth, OR a historical peak / pre-correction multiple. State the anchor ("75x = peer median 33x × 2.3 premium reflecting MRVL's 42% CAGR vs peer median 28%").
+- **Bear case multiple** = peer-median forward multiple OR a historical trough, whichever is lower. State the anchor ("33x = peer median, implying MRVL re-rates to the AVGO baseline").
+- An unanchored multiple (a number with no stated reason for its level) is not acceptable. The reader must be able to see why the case has the multiple it has.
+
 ## Top 3 risks
 ~120 words. Exactly three risks. Each one bullet, 30-40 words.
 
@@ -635,7 +641,7 @@ Three is the cap. If a fourth genuinely matters, raise the bar on which two stay
 Three subsections, in this order:
 
 ### Financial Summary
-Trailing-only markdown table. Columns left to right: prior fiscal year | LFY | LTM.
+Trailing-only markdown table. Default columns left to right: prior fiscal year | LFY | LTM. If a third year of history is materially useful for showing the trend (e.g., the company's trajectory is non-linear or there was a basis change), an additional prior-prior fiscal year column at the far left is acceptable — but never more than four total trailing columns, and the rightmost column is ALWAYS LTM (not a fiscal year).
 
 LFY HARD CHECK: LFY = most recent COMPLETED fiscal year. If today is on or after February of year N+1, LFY = FY-N. For a calendar-FY company in June 2026, LFY = FY2025. This is true regardless of whether the FY2025 annual filing has dropped — if FY2025 numbers are available via press release / 6-K only, use those and footnote the source. Showing `FY2023 | FY2024 | LTM` and skipping FY2025 is WRONG.
 
@@ -1716,6 +1722,206 @@ def _check_c7_citations(draft: str) -> list[dict]:
     return findings
 
 
+# ---------- Financial-table parsing helper (shared by C8 / C9 / C10) ----------
+
+def _find_section(draft: str, name: str) -> str:
+    """Find a section by name at H2 OR H3 level. The new shape puts
+    Financial Summary / Peer Comp Table as H3 inside Appendix; legacy
+    puts Financial Summary as H3 inside Financial Profile. Either way,
+    locating by name without committing to a heading level avoids
+    coupling these checks to layout."""
+    for level in (2, 3):
+        text = _section_text(draft, name, level=level)
+        if text:
+            return text
+    return ""
+
+
+def _parse_table_row(section: str, label: str) -> list[float | None]:
+    """Extract numeric cells from a markdown table row whose first cell
+    matches `label`. Handles $ B M %, parens-for-negative, NA / NM / —."""
+    pattern = rf"\|\s*{re.escape(label)}[^|]*\|(.+?)\|\s*$"
+    m = re.search(pattern, section, re.MULTILINE)
+    if not m:
+        return []
+    cells = [c.strip() for c in m.group(1).split("|")]
+    vals: list[float | None] = []
+    for raw in cells:
+        s = raw.replace(",", "").replace("$", "").replace("%", "")
+        s = s.replace("B", "").replace("M", "").strip()
+        # Parens-for-negative accounting style
+        if s.startswith("(") and s.endswith(")"):
+            s = "-" + s[1:-1]
+        # Strip bold/italic markdown
+        s = s.replace("**", "").replace("*", "").strip()
+        try:
+            vals.append(float(s))
+        except ValueError:
+            vals.append(None)
+    return vals
+
+
+# ---------- C8 / C9 / C10: validators tuned for the new (8-section) shape ----------
+
+def _check_c8_eps_footing(draft: str) -> list[dict]:
+    """C8 — for each Financial Summary column, recompute implied diluted
+    share count = Net Income / |Diluted EPS|. Assert the implied count is
+    consistent across columns (within ~50% to accommodate one-time-item
+    noise on the LFY column). Catches the 10x-EPS error class observed on
+    the MRVL 2026-06-15 v0: FY24 NI=$0.39B with EPS=$0.05 implies 7,800M
+    shares against a real diluted count of ~865M."""
+    findings: list[dict] = []
+    section = _find_section(draft, "Financial Summary")
+    if not section:
+        return findings
+
+    ni = _parse_table_row(section, "Net Income")
+    eps = _parse_table_row(section, "Diluted EPS")
+    if not ni or not eps:
+        return findings
+
+    # NI in $B (typical), EPS in $; implied shares in M = (NI / |EPS|) * 1000
+    implied: list[float] = []
+    for n, e in zip(ni, eps):
+        if n is None or e is None or e == 0:
+            continue
+        implied.append(abs(n / e) * 1000)
+
+    if len(implied) < 2:
+        return findings
+
+    spread = max(implied) / min(implied)
+    if spread > 1.5:
+        findings.append({
+            "check_id": "C8",
+            "severity": "HIGH",
+            "fix": (
+                f"Financial Summary EPS does not foot: implied diluted share count varies "
+                f"from {min(implied):.0f}M to {max(implied):.0f}M across columns ({spread:.1f}x spread). "
+                "Recompute EPS = Net Income / diluted shares using a SINGLE share count source. "
+                "The most common cause is a loss-year EPS shown ~10x too small "
+                "(e.g., ($0.10) where ($1.00) is correct). Check the negative-EPS rows first."
+            ),
+        })
+    return findings
+
+
+def _check_c9_peer_ltm_outlier(draft: str) -> list[dict]:
+    """C9 — for each peer in the Peer Comp Table, flag when EV/Rev (LTM)
+    is materially above the peer median. The most common cause is a
+    single-quarter revenue value mislabeled as TTM (NVDA shown at 60.5x
+    EV/Rev (LTM) on the MRVL 2026-06-15 v0 because $81.6B was Q1 FY27
+    single-quarter, not real TTM ~$253B)."""
+    findings: list[dict] = []
+    section = _find_section(draft, "Peer Comp Table")
+    if not section:
+        return findings
+
+    # Find the table header row to locate the EV/Rev (LTM) column index.
+    header_re = re.compile(r"^\|\s*Company\s*\|(.+?)\|\s*$", re.MULTILINE)
+    hm = header_re.search(section)
+    if not hm:
+        return findings
+    headers = [h.strip() for h in hm.group(1).split("|")]
+    target_idx = next(
+        (i for i, h in enumerate(headers) if re.search(r"EV/Rev\s*\(LTM", h, re.I)),
+        None,
+    )
+    if target_idx is None:
+        return findings
+
+    # Walk subsequent rows; collect (name, ev_rev_ltm) tuples.
+    rows: list[tuple[str, float]] = []
+    for line in section.splitlines():
+        line = line.strip()
+        if not line.startswith("|") or "---" in line or line == hm.group(0):
+            continue
+        cells = [c.strip() for c in line.strip("|").split("|")]
+        if len(cells) < target_idx + 2:
+            continue
+        name = cells[0].replace("**", "").strip()
+        if not name or name.lower() == "company":
+            continue
+        if name.lower() == "median" or "median" in name.lower():
+            continue
+        raw = cells[target_idx + 1].replace("x", "").replace("**", "").strip()
+        try:
+            val = float(raw)
+        except ValueError:
+            continue
+        rows.append((name, val))
+
+    if len(rows) < 3:
+        return findings
+
+    # Compute peer median (exclude row 0 = subject by convention).
+    peer_vals = sorted(v for _, v in rows[1:])
+    n = len(peer_vals)
+    median = (
+        peer_vals[n // 2]
+        if n % 2
+        else (peer_vals[n // 2 - 1] + peer_vals[n // 2]) / 2
+    )
+
+    for name, val in rows[1:]:
+        if median > 0 and val > 2 * median:
+            findings.append({
+                "check_id": "C9",
+                "severity": "HIGH",
+                "fix": (
+                    f"Peer Comp Table: {name} shown at {val:.1f}x EV/Rev (LTM) — more than 2x "
+                    f"the peer median of {median:.1f}x. The most common cause is a single-quarter "
+                    f"revenue mislabeled as TTM; verify by computing TTM = sum of last 4 reported "
+                    f"quarter revenues. If the LTM value is wrong, every {name} multiple in the row "
+                    f"is wrong and must be recomputed."
+                ),
+            })
+    return findings
+
+
+def _check_c10_ebitda_basis(draft: str) -> list[dict]:
+    """C10 — for each Financial Summary column, assert EBITDA > Net Income.
+    A column where EBITDA roughly equals or is below Net Income signals a
+    basis mismatch (e.g., NI includes a one-time gain that EBITDA excludes,
+    leaving the two on incompatible bases) — observed on MRVL 2026-06-15
+    v0 where FY26 EBITDA $2.71B sits just above NI $2.67B because NI
+    includes the $1.8B gain and EBITDA does not."""
+    findings: list[dict] = []
+    section = _find_section(draft, "Financial Summary")
+    if not section:
+        return findings
+
+    ebitda = _parse_table_row(section, "EBITDA")
+    if not ebitda:
+        ebitda = _parse_table_row(section, "Adjusted EBITDA")
+    ni = _parse_table_row(section, "Net Income")
+    if not ebitda or not ni:
+        return findings
+
+    for col_idx, (e, n) in enumerate(zip(ebitda, ni)):
+        if e is None or n is None:
+            continue
+        if e <= 0 or n <= 0:
+            # Loss-year rows: EBITDA can plausibly be below NI absolute value
+            # in edge cases (impairment writedown impacts NI but not EBITDA).
+            # Skip the check on negative rows.
+            continue
+        if n > 0.95 * e:
+            findings.append({
+                "check_id": "C10",
+                "severity": "MEDIUM",
+                "fix": (
+                    f"Financial Summary column {col_idx + 1}: Net Income (${n:.2f}B) is more than "
+                    f"95% of EBITDA (${e:.2f}B) — implies D&A + Interest + Tax under 5% of EBITDA, "
+                    f"which is structurally unlikely. Most common cause: NI includes a one-time gain "
+                    f"that EBITDA excludes, leaving the two on incompatible bases. State the EBITDA "
+                    f"basis explicitly (GAAP vs Adjusted; with vs without one-time items) and ensure "
+                    f"NI and EBITDA on the same row share basis."
+                ),
+            })
+    return findings
+
+
 def _review_draft(
     draft: str,
     ticker: str,
@@ -1747,6 +1953,11 @@ def _review_draft(
         findings.extend(_check_c6_margin_sanity(draft))
     else:
         findings.extend(_check_c5_sections(draft, legacy=False))
+        # New-shape-only validators (C8/C9/C10 parse the new Financial
+        # Summary + Peer Comp Table layout inside Appendix at H3).
+        findings.extend(_check_c8_eps_footing(draft))
+        findings.extend(_check_c9_peer_ltm_outlier(draft))
+        findings.extend(_check_c10_ebitda_basis(draft))
     findings.extend(_check_c7_citations(draft))
     return findings
 
