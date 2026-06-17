@@ -476,9 +476,24 @@ Every peer's AND every named competitor's market cap, EV, share price, share cou
    - Financials: https://stockanalysis.com/quote/hkg/{{code}}/financials/
    - Forecast: https://stockanalysis.com/quote/hkg/{{code}}/forecast/ (FY+1 forward EPS only; mark FY+2 P/E as "NM")
 
-   **PRIVATE competitors** (Epic Games, Valve, etc.) → labelled estimates only, source named: "$6B estimated 2025 revenue (Sacra)", never bare. This is the ONLY allowed third-party source path.
+   **KOREAN EXCHANGE (KOSPI / KOSDAQ) peers/competitors** (Samsung 005930, SK Hynix 000660, LG Energy 373220, etc.):
+   - PRIMARY: Yahoo Finance with `.KS` (KOSPI) or `.KQ` (KOSDAQ) suffix.
+     https://finance.yahoo.com/quote/005930.KS/key-statistics/
+     https://finance.yahoo.com/quote/005930.KS/financials/
+     https://finance.yahoo.com/quote/005930.KS/analysis/
+   - If Yahoo's /analysis page shows fewer than 3 analysts for FY+1/FY+2 consensus (KRX coverage is genuinely thinner than US), MarketScreener is the ONLY approved Tier-2 fallback for the missing FY+1/FY+2 revenue and EPS rows:
+     https://www.marketscreener.com/quote/stock/{{name-id}}/financials/
+     Cite it explicitly in Sources AND footnote the Peer Comp Table: "Korean peer consensus from MarketScreener; Yahoo coverage thin for KRX FY+2."
+   - Use Yahoo for snapshot/financials, MarketScreener ONLY for forwards when Yahoo is empty. Do not mix sources for the same field on the same row.
 
-   **NO OTHER SOURCES** for peer/competitor financial figures. Do NOT use TIKR, GuruFocus, Macrotrends, BusinessQuant, Futurum, Forbes, blog posts, news articles, or your own triangulation for any peer's market cap, EV, revenue, EPS, margin, NI, or FCF.
+   **TOKYO EXCHANGE (TYO) peers/competitors** (Sony 6758.T, Toyota 7203.T, etc.) → Yahoo Finance with `.T` suffix. Same three pages.
+
+   **TAIWAN EXCHANGE (TWSE) peers/competitors** (TSMC 2330.TW, MediaTek 2454.TW, etc.) → Yahoo Finance with `.TW` suffix. PREFER the US ADR ticker if one exists (TSM for TSMC) — ADR pages on Yahoo have richer analyst coverage and avoid the need for a TW-specific fetch.
+
+   **PRIVATE competitors** (Epic Games, Valve, etc.) → labelled estimates only, source named: "$6B estimated 2025 revenue (Sacra)", never bare. This is the ONLY allowed third-party source path for non-public companies.
+
+   **EXPLICIT BAN LIST — do NOT use these sources for ANY peer or competitor financial figure**, regardless of market:
+   TIKR, GuruFocus, Macrotrends, BusinessQuant, MarketBeat, Futurum, Forbes, SammyGuru, Astute Group, simplywall.st, Investing.com, Yahoo Finance video content, news articles (Reuters/Bloomberg/WSJ news pages do not count as data sources), aggregator blog posts, or your own triangulation from heterogeneous sources. The previous MU/MRVL runs each violated this by triangulating peer numbers from blog posts — every such citation is a rule violation.
 
    **Hard fallback for missing data:** if Yahoo Finance (or stockanalysis.com for HK) doesn't have a specific peer's specific data point, the cell is "NM". Do NOT fall back to other aggregators for that figure. NM is the only acceptable substitute. The Peer Comp Table median rule (<3 valid values → "—") handles thin coverage gracefully.
 
@@ -676,7 +691,10 @@ Hard rules:
 ### Peer Comp Table
 One-sentence rationale for peer selection. Then a markdown table with the subject in row 1, 4-6 peers below, Median row at bottom.
 
-Columns: Company | EV ($B) | Rev (basis, $B) | 2-yr Rev CAGR | EV/Rev (LTM) | EV/Rev (FY+1E) | EV/Rev (FY+2E) | P/E (LTM) | P/E (FY+1E) | P/E (FY+2E).
+REQUIRED COLUMNS (all TEN, in this order — collapsing forwards into a single "Fwd P/E" or dropping FY+2 columns is a SPEC VIOLATION; use NM for missing cells, do NOT drop columns):
+`Company | EV ($B) | Rev (basis, $B) | 2-yr Rev CAGR | EV/Rev (LTM) | EV/Rev (FY+1E) | EV/Rev (FY+2E) | P/E (LTM) | P/E (FY+1E) | P/E (FY+2E)`
+
+The peer median rule (<3 valid non-"NM" values → "—") was specifically designed so thin consensus coverage is handled gracefully WITHOUT dropping columns. If you only have FY+1 consensus for 2 of 4 peers and no FY+2 at all, the table still has all 10 columns: NM in the 2 cells where FY+1 is missing, NM in all peer cells of FY+2 columns, and "—" in the median for FY+2. Reader sees the structure and the limitation.
 
 - Single-period-per-column: the LTM column uses LTM revenue for every row; FY+1E uses FY+1E consensus revenue for every row; never mix periods within a column.
 - Label the Rev column header with its basis: "Rev (LTM, $B)" or "Rev (FY2025, $B)".
@@ -1603,22 +1621,55 @@ _REQUIRED_SECTIONS_LEGACY = [
     "Sources",
 ]
 
+# Canonical Chinese translations of new-shape section/subsection headers.
+# Locked in _LANG_INSTRUCTION_ZH; validators and the open-questions
+# extractor accept either the English name or its Chinese alias.
+_SECTION_NAMES_ZH = {
+    # H2 section headers (new shape)
+    "Thesis": "投资论点",
+    "Business snapshot": "业务概览",
+    "What the Street thinks": "市场观点",
+    "Bull / Bear / Base": "看多 / 看空 / 基准情景",
+    "Top 3 risks": "三大风险",
+    "Catalyst calendar": "催化剂日历",
+    "Appendix": "附录",
+    "Open Questions": "未解决问题",
+    "Sources": "数据来源",
+    # H3 subsection headers used inside the appendix / debates
+    "Street consensus": "市场一致预期",
+    "Three debates": "三大争议",
+    "Financial Summary": "财务摘要",
+    "Competitive Landscape": "竞争格局",
+    "Peer Comp Table": "同业估值比较",
+}
+
 
 def _check_c5_sections(draft: str, legacy: bool = False) -> list[dict]:
     """C5 — required H2 sections all present. The required list depends
     on which template produced the draft; legacy=True checks the
     11-section sell-side layout, default checks the 8-section thesis
     shape (plus Open Questions, which is emitted in the body and then
-    extracted to frontmatter post-review)."""
+    extracted to frontmatter post-review).
+
+    For the new shape, both the English heading text AND its locked
+    Chinese alias (see _SECTION_NAMES_ZH) count as present — so a
+    Chinese-output report with `## 投资论点` satisfies the `Thesis`
+    requirement without needing a separate zh validator path."""
     required = _REQUIRED_SECTIONS_LEGACY if legacy else _REQUIRED_SECTIONS_NEW
     findings = []
     for name in required:
-        if f"## {name}" not in draft:
-            findings.append({
-                "check_id": "C5",
-                "severity": "HIGH",
-                "fix": f"Required H2 section \"## {name}\" is missing. Add it with the content the section format calls for.",
-            })
+        if f"## {name}" in draft:
+            continue
+        # New shape only: accept the locked Chinese alias as equivalent.
+        if not legacy:
+            zh = _SECTION_NAMES_ZH.get(name)
+            if zh and f"## {zh}" in draft:
+                continue
+        findings.append({
+            "check_id": "C5",
+            "severity": "HIGH",
+            "fix": f"Required H2 section \"## {name}\" is missing. Add it with the content the section format calls for.",
+        })
     return findings
 
 
@@ -1743,17 +1794,30 @@ def _find_section(draft: str, name: str) -> str:
     Financial Summary / Peer Comp Table as H3 inside Appendix; legacy
     puts Financial Summary as H3 inside Financial Profile. Either way,
     locating by name without committing to a heading level avoids
-    coupling these checks to layout."""
+    coupling these checks to layout.
+
+    Falls back to the locked Chinese alias (see _SECTION_NAMES_ZH) when
+    the English heading isn't present — so a Chinese-output report with
+    `### 财务摘要` is found by `_find_section(draft, "Financial Summary")`."""
     for level in (2, 3):
         text = _section_text(draft, name, level=level)
         if text:
             return text
+    # Chinese alias fallback
+    zh = _SECTION_NAMES_ZH.get(name)
+    if zh:
+        for level in (2, 3):
+            text = _section_text(draft, zh, level=level)
+            if text:
+                return text
     return ""
 
 
 def _parse_table_row(section: str, label: str) -> list[float | None]:
     """Extract numeric cells from a markdown table row whose first cell
-    matches `label`. Handles $ B M %, parens-for-negative, NA / NM / —."""
+    matches `label`. Handles $ B M %, parens-for-negative accounting,
+    NA / NM / —, plus mixed cells like `$11.52B (+41% YoY)` by extracting
+    just the leading numeric token."""
     pattern = rf"\|\s*{re.escape(label)}[^|]*\|(.+?)\|\s*$"
     m = re.search(pattern, section, re.MULTILINE)
     if not m:
@@ -1761,17 +1825,28 @@ def _parse_table_row(section: str, label: str) -> list[float | None]:
     cells = [c.strip() for c in m.group(1).split("|")]
     vals: list[float | None] = []
     for raw in cells:
-        s = raw.replace(",", "").replace("$", "").replace("%", "")
-        s = s.replace("B", "").replace("M", "").strip()
-        # Parens-for-negative accounting style
-        if s.startswith("(") and s.endswith(")"):
-            s = "-" + s[1:-1]
-        # Strip bold/italic markdown
-        s = s.replace("**", "").replace("*", "").strip()
-        try:
-            vals.append(float(s))
-        except ValueError:
-            vals.append(None)
+        # Strip markdown decoration first
+        cleaned = raw.replace("**", "").replace("*", "").replace(",", "").strip()
+        # Accounting-style negative: (1.23) at start of cell -> -1.23
+        m_neg = re.match(r"^\$?\(\s*(\d+(?:\.\d+)?)\s*\)", cleaned)
+        if m_neg:
+            try:
+                vals.append(-float(m_neg.group(1)))
+                continue
+            except ValueError:
+                pass
+        # Otherwise: first signed decimal anywhere in the cell. Skips $
+        # prefix, ignores trailing "(+41% YoY)" style suffixes, ignores
+        # currency / scale letters (B, M, %) — we just take the leading
+        # numeric magnitude.
+        m_num = re.search(r"(-?\d+(?:\.\d+)?)", cleaned)
+        if m_num:
+            try:
+                vals.append(float(m_num.group(1)))
+                continue
+            except ValueError:
+                pass
+        vals.append(None)
     return vals
 
 
@@ -1936,6 +2011,211 @@ def _check_c10_ebitda_basis(draft: str) -> list[dict]:
     return findings
 
 
+def _check_c11_peer_comp_columns(draft: str) -> list[dict]:
+    """C11 — Peer Comp Table must have all 10 required columns. The new
+    template was specifically designed so thin consensus coverage is
+    handled by NM-filling cells, not by dropping columns — but the model
+    has been observed compressing forwards into a single 'Fwd P/E' column
+    (MU 2026-06-16 v0.2 shipped with only 3 multiple columns instead of
+    6). This check fires when the table is shorter than spec."""
+    findings: list[dict] = []
+    section = _find_section(draft, "Peer Comp Table")
+    if not section:
+        return findings
+
+    header_re = re.compile(r"^\|\s*(Company|公司)\s*\|(.+?)\|\s*$", re.MULTILINE)
+    hm = header_re.search(section)
+    if not hm:
+        return findings
+    headers = [h.strip() for h in hm.group(2).split("|")]
+    n_cols = len(headers) + 1  # +1 for the Company/公司 column
+
+    if n_cols < 10:
+        # List what's missing — checking for the three forward multiple columns
+        # that are most often dropped.
+        joined = " | ".join(headers).lower()
+        missing = []
+        if "ev/rev (fy+1e)" not in joined and "fy+1e" not in joined.replace("p/e", ""):
+            missing.append("EV/Rev (FY+1E)")
+        if "ev/rev (fy+2e)" not in joined and not re.search(r"fy\+2", joined):
+            missing.append("EV/Rev (FY+2E)")
+        if not re.search(r"p/e\s*\(fy\+2e\)", joined):
+            missing.append("P/E (FY+2E)")
+        missing_str = ", ".join(missing) if missing else "(one or more of the FY+1E / FY+2E forward columns)"
+        findings.append({
+            "check_id": "C11",
+            "severity": "HIGH",
+            "fix": (
+                f"Peer Comp Table has only {n_cols} columns (spec requires 10). "
+                f"Likely missing: {missing_str}. The spec requires all 10 columns "
+                f"(Company | EV | Rev | 2-yr Rev CAGR | EV/Rev LTM/FY+1E/FY+2E | "
+                f"P/E LTM/FY+1E/FY+2E). Use NM for cells where consensus isn't "
+                f"available — do NOT drop columns. The peer median rule (<3 valid "
+                f"values → \"—\") handles thin coverage gracefully without "
+                f"changing the table shape."
+            ),
+        })
+    return findings
+
+
+def _check_c12_ltm_cross_check(draft: str) -> list[dict]:
+    """C12 — for each row in Financial Summary, LTM should not be more than
+    2.5× LFY (suggesting a single recent quarter was annualized). On the
+    MU 2026-06-16 v0.2 run, LTM Net Income was $32B against FY25 LFY of
+    $8.5B (3.76x) — likely Q2 FY26 NI of ~$7.5B × 4. Real LTM ending Feb
+    2026 was ~$19B."""
+    findings: list[dict] = []
+    section = _find_section(draft, "Financial Summary")
+    if not section:
+        return findings
+
+    # Check the most-watched rows for a giant LTM/LFY jump.
+    # Use multiple label aliases (English + locked Chinese) so this works
+    # in either language.
+    row_labels = {
+        "Revenue": ["Revenue", "营收", "营业收入"],
+        "Net Income": ["Net Income", "净利润"],
+        "Free Cash Flow": ["Free Cash Flow", "FCF", "自由现金流"],
+        "Diluted EPS": ["Diluted EPS", "摊薄EPS"],
+    }
+
+    for canon, aliases in row_labels.items():
+        cells: list[float | None] = []
+        for alias in aliases:
+            cells = _parse_table_row(section, alias)
+            if cells:
+                break
+        if not cells or len(cells) < 2:
+            continue
+        # Identify LFY (second-to-last) and LTM (last) — Financial Summary
+        # convention is: prior FY | LFY | LTM (or prior FY | prior FY | LFY | LTM
+        # with the 4-column variant).
+        lfy_val = cells[-2]
+        ltm_val = cells[-1]
+        if lfy_val is None or ltm_val is None or lfy_val <= 0 or ltm_val <= 0:
+            # Skip loss-years — the ratio check is only meaningful when both
+            # values are positive.
+            continue
+        ratio = ltm_val / lfy_val
+        if ratio > 2.5:
+            findings.append({
+                "check_id": "C12",
+                "severity": "HIGH",
+                "fix": (
+                    f"Financial Summary {canon}: LTM (${ltm_val:.2f}B) is {ratio:.1f}x "
+                    f"LFY (${lfy_val:.2f}B). A {ratio:.1f}x jump in 1-2 quarters of TTM "
+                    f"roll is structurally implausible — the most common cause is "
+                    f"annualizing a single recent strong quarter (e.g., Q2 NI × 4) "
+                    f"instead of summing the last 4 reported quarters. Recompute LTM "
+                    f"as sum of the last 4 quarterly disclosures and cite the source. "
+                    f"If a one-time gain caused a legitimate jump, footnote it."
+                ),
+            })
+    return findings
+
+
+def _check_c13_cagr_validation(draft: str) -> list[dict]:
+    """C13 — recompute 2-yr Rev CAGR from LFY revenue (Financial Summary)
+    and FY+2E consensus revenue (Street consensus table), and compare to
+    the stated value in the Business snapshot or Peer Comp Table. Flag
+    if the diff is more than 3 percentage points. Catches the MU
+    2026-06-16 case where stated CAGR was 10.6% but recomputed from
+    LFY $37.4B → FY+2E $112B = (112/37.4)^0.5 - 1 = 73%."""
+    findings: list[dict] = []
+    fs = _find_section(draft, "Financial Summary")
+    sc = _find_section(draft, "Street consensus")
+    if not fs or not sc:
+        return findings
+
+    # LFY revenue = second-to-last column of Revenue row in Financial Summary
+    rev_cells: list[float | None] = []
+    for alias in ("Revenue", "营收", "营业收入"):
+        rev_cells = _parse_table_row(fs, alias)
+        if rev_cells:
+            break
+    if not rev_cells or len(rev_cells) < 2:
+        return findings
+    lfy_rev = rev_cells[-2]
+    if lfy_rev is None or lfy_rev <= 0:
+        return findings
+
+    # FY+2E revenue = second cell of Revenue row in Street consensus
+    sc_cells: list[float | None] = []
+    for alias in ("Revenue", "营收"):
+        sc_cells = _parse_table_row(sc, alias)
+        if sc_cells:
+            break
+    if not sc_cells or len(sc_cells) < 2:
+        return findings
+    fy2e_rev = sc_cells[1]
+    if fy2e_rev is None or fy2e_rev <= 0:
+        return findings
+
+    implied_cagr = ((fy2e_rev / lfy_rev) ** 0.5 - 1) * 100
+
+    # Extract stated 2-yr CAGR from the Business snapshot 5-column
+    # table — locate the CAGR column header, then read the cell at the
+    # same index in the subsequent data row. This avoids matching debate
+    # thresholds like "increase by 250%" that contain growth-rate words
+    # without being the canonical stated CAGR.
+    snapshot = _find_section(draft, "Business snapshot")
+    if not snapshot:
+        return findings
+
+    stated: float | None = None
+    snapshot_lines = snapshot.splitlines()
+    for i, line in enumerate(snapshot_lines):
+        if not line.strip().startswith("|"):
+            continue
+        # Look for a header row containing CAGR (English or Chinese)
+        if not re.search(r"CAGR", line, re.IGNORECASE):
+            continue
+        headers = [h.strip() for h in line.strip().strip("|").split("|")]
+        cagr_idx = next(
+            (j for j, h in enumerate(headers) if re.search(r"CAGR", h, re.I)),
+            None,
+        )
+        if cagr_idx is None:
+            continue
+        # Walk forward to the first data row (not separator, not blank)
+        for next_line in snapshot_lines[i + 1:]:
+            ln = next_line.strip()
+            if not ln.startswith("|") or "---" in ln:
+                continue
+            cells = [c.strip() for c in ln.strip("|").split("|")]
+            if cagr_idx < len(cells):
+                m_pct = re.search(r"(-?\d+(?:\.\d+)?)\s*%", cells[cagr_idx])
+                if m_pct:
+                    try:
+                        stated = float(m_pct.group(1))
+                    except ValueError:
+                        stated = None
+            break
+        if stated is not None:
+            break
+
+    if stated is None:
+        return findings
+
+    diff = abs(stated - implied_cagr)
+    if diff > 3.0:
+        findings.append({
+            "check_id": "C13",
+            "severity": "HIGH",
+            "fix": (
+                f"Stated 2-yr Rev CAGR ({stated:.1f}%) does not match the value "
+                f"implied by LFY revenue (${lfy_rev:.2f}B) and FY+2E consensus "
+                f"revenue (${fy2e_rev:.2f}B) — recomputed CAGR = "
+                f"(${fy2e_rev:.2f}/{lfy_rev:.2f})^(1/2) - 1 = {implied_cagr:.1f}%. "
+                f"Diff = {diff:.1f}pp. Recompute the CAGR using LFY actual (from "
+                f"Financial Summary) and FY+2E consensus (from Street consensus "
+                f"table) as the two endpoints. Update both the Business snapshot "
+                f"table and the Peer Comp Table subject row."
+            ),
+        })
+    return findings
+
+
 def _review_draft(
     draft: str,
     ticker: str,
@@ -1967,11 +2247,14 @@ def _review_draft(
         findings.extend(_check_c6_margin_sanity(draft))
     else:
         findings.extend(_check_c5_sections(draft, legacy=False))
-        # New-shape-only validators (C8/C9/C10 parse the new Financial
+        # New-shape-only validators (C8-C13 parse the new Financial
         # Summary + Peer Comp Table layout inside Appendix at H3).
         findings.extend(_check_c8_eps_footing(draft))
         findings.extend(_check_c9_peer_ltm_outlier(draft))
         findings.extend(_check_c10_ebitda_basis(draft))
+        findings.extend(_check_c11_peer_comp_columns(draft))
+        findings.extend(_check_c12_ltm_cross_check(draft))
+        findings.extend(_check_c13_cagr_validation(draft))
     findings.extend(_check_c7_citations(draft))
     return findings
 
@@ -2168,11 +2451,20 @@ def _extract_open_questions(draft: str) -> tuple[list[str], str]:
     """Pull the ## Open Questions section out of the Phase 3 draft, parse
     bullet items into a list, and return (items, draft_without_section).
     Used to route the model's data-gap confessions into YAML frontmatter
-    metadata instead of the reader-facing body."""
-    m = re.search(
-        r"\n## Open Questions\n(.*?)(?=\n## |\Z)",
-        draft, re.DOTALL,
-    )
+    metadata instead of the reader-facing body.
+
+    Accepts both the English heading `## Open Questions` and the locked
+    Chinese alias `## 未解决问题` so the extraction works regardless of
+    the report's output language."""
+    aliases = ["Open Questions", _SECTION_NAMES_ZH.get("Open Questions", "未解决问题")]
+    m = None
+    for alias in aliases:
+        m = re.search(
+            rf"\n## {re.escape(alias)}\n(.*?)(?=\n## |\Z)",
+            draft, re.DOTALL,
+        )
+        if m:
+            break
     if not m:
         return [], draft
     items: list[str] = []
@@ -2243,17 +2535,49 @@ _LANG_INSTRUCTION_ZH = """
 
 WRITE THIS REPORT ENTIRELY IN SIMPLIFIED CHINESE (简体中文). The reader is a Chinese-speaking investor analyzing US-listed equities.
 
+DOCUMENT TITLE (locked): the H1 title MUST follow this exact pattern:
+`# [Ticker]: [Chinese company name] ([English company name]) — 投资简报`
+e.g. `# MRVL: 美满电子 (Marvell Technology) — 投资简报`. The phrase 投资简报
+("investment brief") is the canonical Chinese label for this artifact;
+do NOT substitute alternatives like 首次覆盖 / 公司深度研究 / 投资简介.
+
+SECTION HEADERS (locked Chinese translations — use these EXACT strings):
+- ## Thesis           → ## 投资论点
+- ## Business snapshot → ## 业务概览
+- ## What the Street thinks → ## 市场观点
+  - ### Street consensus → ### 市场一致预期
+  - ### Three debates    → ### 三大争议
+    - #### Debate N: ... → #### 争议N: ...
+    - **Bulls argue:**   → **看多观点：**
+    - **Bears argue:**   → **看空观点：**
+    - **What resolves it:** → **如何验证：**
+- ## Bull / Bear / Base → ## 看多 / 看空 / 基准情景
+  - ### Bull → ### 看多情景
+  - ### Bear → ### 看空情景
+  - ### Base → ### 基准情景
+- ## Top 3 risks → ## 三大风险
+- ## Catalyst calendar → ## 催化剂日历
+- ## Appendix → ## 附录
+  - ### Financial Summary → ### 财务摘要
+  - ### Competitive Landscape → ### 竞争格局
+  - ### Peer Comp Table → ### 同业估值比较
+- ## Open Questions → ## 未解决问题
+- ## Sources → ## 数据来源
+
+Stick to these exact translations every run. Downstream validators key on
+them.
+
 Preserve EXACTLY (do not translate, transliterate, or convert):
 - Numbers, dates, and units verbatim: $, %, x (as in 14.5x), B / M / bn / mn, basis points, ratios.
 - Currency: US dollars stay US dollars ($). NEVER restate as RMB / ¥.
 - Source URLs — byte-identical. Source titles may be in English; do not translate them. Publication names may be transliterated if a standard Chinese form is well established, otherwise keep English.
 - Ticker symbols in Latin letters (e.g. RBLX, MU, NTES).
-- Markdown structure: headings, tables (same columns, same number of rows, same alignment), lists, section order — identical to what the English version would have.
+- Markdown structure: tables (same columns, same number of rows, same alignment), lists, section order — identical to what the English version would have.
 
 Terminology — use standard Chinese financial terms, consistently:
 - Keep these acronyms as-is (optionally add Chinese term in parentheses on first use only): EBITDA, FCF, DCF, EV, TAM, GAAP, SBC, CAGR, YoY, QoQ, LTM, TTM, DAU, MAU, ARPU, ROE, ROIC.
 - free cash flow → 自由现金流; enterprise value → 企业价值; bookings → 预订量（流水）; deferred revenue → 递延收入; gross margin → 毛利率; operating margin → 营业利润率; net cash → 净现金; dilution → 摊薄; guidance → 业绩指引; consensus → 市场一致预期; re-rating → 估值重估.
-- Company names: use the established Chinese name where one exists (e.g. NetEase → 网易, Micron → 美光); otherwise keep the English name.
+- Company names: use the established Chinese name where one exists (e.g. NetEase → 网易, Micron → 美光, Marvell → 美满电子); otherwise keep the English name.
 
 The Investment Framework discipline applies in Chinese exactly as it does in English:
 - Never write 买入 / 卖出 / 持有 (or any directional rating phrasing). Chinese makes these phrasings very natural — resist.
