@@ -3,7 +3,10 @@ briefs/
 briefs_en/
 # briefs_ch/ is intentionally tracked — Chinese briefs are published so
 # they can be read on a phone (GitHub web renders .md acceptably).
-reports/
+# reports/ is intentionally tracked from 2026-06-17 onward — new thesis-
+# shaped initiate outputs are public. Pre-rebuild reports live in
+# reports_legacy/ which stays private.
+reports_legacy/
 token_log/
 .claude/
 __pycache__/

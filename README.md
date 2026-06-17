@@ -44,9 +44,9 @@ analyst initiate RBLX --translate zh
 analyst translate reports/RBLX-initiation-20260426.md --lang zh
 ```
 
-Output files use the convention `TICKER-slug-YYYYMMDD.md` (briefs) and `TICKER-initiation-YYYYMMDD.md` (reports). Translations are saved alongside the original with a language suffix, e.g. `TICKER-initiation-YYYYMMDD.zh.md`.
+Output files use the convention `TICKER-slug-YYYYMMDD.md` (briefs) and `TICKER-initiation-YYYYMMDD.md` (reports).
 
-Real sample initiation reports are in [`examples/`](examples/) — committed as-produced (including the actual data gaps and limitations flagged in each report's Open Questions section) so readers can see what the tool actually outputs, not polished demos.
+Real sample initiation reports are in [`reports/`](reports/) — committed as-produced (including the data gaps flagged in each file's frontmatter `open_questions:` metadata). The pre-rebuild 11-section sell-side format is preserved in the (gitignored) `reports_legacy/` archive.
 
 ## Sample brief structure
 
@@ -117,9 +117,10 @@ Without explicit phase rules the model interleaved gathering, computing, and wri
 analyst.py            # everything
 pyproject.toml        # dependencies, console script entry point
 .env.example          # template for API keys
-examples/             # committed sample outputs
-briefs/               # research output (gitignored)
-reports/              # initiation output (gitignored)
+reports/              # initiation output (tracked, public)
+reports_legacy/       # pre-rebuild initiation archive (gitignored)
+briefs_en/            # English research briefs (gitignored)
+briefs_ch/            # Chinese research briefs (tracked, public)
 ```
 
 ## License

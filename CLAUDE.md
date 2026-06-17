@@ -140,10 +140,10 @@ analyst.py            # entire tool
 pyproject.toml        # deps, console script entry point
 .env.example          # template for MOONSHOT_API_KEY / TAVILY_API_KEY
 .env                  # (gitignored) actual keys
-examples/             # committed sample reports
+reports/              # tracked — thesis-shaped initiation outputs (post 2026-06-15 rebuild)
+reports_legacy/       # (gitignored) pre-rebuild initiation archive — 11-section sell-side format
 briefs_en/            # (gitignored) research output — English questions
-briefs_ch/            # (gitignored) research output — Chinese questions
-reports/              # (gitignored) initiation output
+briefs_ch/            # tracked — Chinese research briefs (mobile-readable on GitHub)
 token_log/            # (gitignored) Kimi token usage spreadsheets
 README.md             # user-facing
 LICENSE               # MIT
