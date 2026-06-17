@@ -139,7 +139,8 @@ Do NOT narrate every metric. Only flag divergences.
 ## File layout
 
 ```
-analyst.py            # entire tool
+analyst.py            # entire active tool (research / initiate / mini-app + all validators)
+legacy_prompts.py     # archived legacy initiate prompt only (imported by initiate_legacy command)
 pyproject.toml        # deps, console script entry point
 .env.example          # template for MOONSHOT_API_KEY / TAVILY_API_KEY
 .env                  # (gitignored) actual keys
@@ -159,7 +160,7 @@ These have been considered and shelved — don't suggest them unprompted:
 - **Multi-agent architecture**: discussed at length. The cache-invalidation cost on Kimi outweighs the parallelization wins for this workload. Targeted peer-comp parallelization is the only piece worth revisiting if it comes up.
 - **Switching to Seeking Alpha for trading stats**: paywalled, aggressive bot detection, no data advantage over Yahoo Finance which we're already fetching.
 - **Re-enabling Kimi thinking mode**: breaks the tool-calling round-trip. Don't attempt without solving the `reasoning_content` issue.
-- **Adding a dedicated multi-file architecture**: stay single-file until it actively hurts.
+- **Adding a dedicated multi-file architecture**: stay single-file until it actively hurts. As of 2026-06-17, the only exception is `legacy_prompts.py`, which holds the ~50KB pre-rebuild initiation prompt out of analyst.py so it doesn't pad git diffs or load CLAUDE.md context for active-product work. That's a one-time split for archived code, not a sign the single-file rule has relaxed.
 
 ## When in doubt
 
