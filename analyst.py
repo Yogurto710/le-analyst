@@ -150,48 +150,26 @@ You will be given subject-company foundations (10-K / 20-F / 10-Q / 6-K listings
 
 3. SUBJECT recent earnings press release / 6-K for the most recent completed quarter (and the most recent completed fiscal year if not yet in a 10-K / 20-F). Numbers from press releases / 6-Ks are valid for the LFY column when the annual filing hasn't dropped yet — see the LFY HARD RULE in step 11.
 
-4. PEER SELECTION. Identify 4-6 publicly traded peers. **Peers must share the subject's end market AND have either similar revenue scale OR similar growth profile (2-yr CAGR within ~15 pp).** Adjacent-industry semis are NOT peers for an AI custom-silicon name; the test isn't "another large chip company" but "another large chip company doing the same job for the same customer set." If only 2-3 truly comparable peers exist, use those — a tight homogeneous basket is more useful than a wide heterogeneous one. (The peer median rule already protects against thin baskets: <3 valid values → "—".)
+4. PEER SELECTION. 4-6 publicly traded peers. Peers must share the subject's end market AND have similar revenue scale OR similar growth profile (2-yr CAGR within ~15pp). A tight homogeneous basket beats a wide heterogeneous one — the peer median rule already handles thin baskets (<3 valid values → "—").
 
-PEER & COMPETITOR DATA — HARD RULE (single source per ticker, no fallback to third-party aggregators):
+PEER & COMPETITOR DATA — HARD RULE (single source per ticker):
 
-Every peer's AND every named competitor's market cap, EV, share price, share count, revenue (LTM / FY+1E / FY+2E), revenue growth, EPS (LTM / FY+1E / FY+2E), gross margin, operating margin, net income, and free cash flow MUST come from ONE of these sources only:
+Every peer's AND every named competitor's market cap, EV, share price, share count, revenue (LTM / FY+1E / FY+2E), revenue growth, EPS (LTM / FY+1E / FY+2E), gross margin, operating margin, net income, and FCF MUST come from the approved source for that market:
 
-   **US-LISTED peers/competitors → Yahoo Finance ONLY.** Three pages, same domain:
-   - Quote + key-statistics: https://finance.yahoo.com/quote/{{ticker}}/key-statistics/ (market cap, EV, share price, share count)
-   - Financials: https://finance.yahoo.com/quote/{{ticker}}/financials/ (annual column for LFY; TTM column for LTM revenue, gross profit, EBITDA, net income, FCF, diluted EPS)
-   - Analysis: https://finance.yahoo.com/quote/{{ticker}}/analysis/ (FY+1E and FY+2E consensus revenue and EPS, analyst count)
+| Market | Source | URL / pattern |
+|---|---|---|
+| US-listed | Yahoo Finance ONLY | `finance.yahoo.com/quote/{{ticker}}/{{key-statistics,financials,analysis}}/` |
+| HK-listed | stockanalysis.com ONLY | `stockanalysis.com/quote/hkg/{{code}}/{{,financials/,forecast/}}` |
+| KRX (KOSPI/KOSDAQ) | Yahoo `.KS` / `.KQ` PRIMARY | `finance.yahoo.com/quote/{{code}}.KS/...` — if `/analysis` has <3 analysts for FY+1/FY+2, MarketScreener is the ONLY Tier-2 fallback (cite explicitly, footnote the comp table) |
+| Tokyo (TYO) | Yahoo `.T` | `finance.yahoo.com/quote/{{code}}.T/...` |
+| Taiwan (TWSE) | Yahoo `.TW` | PREFER the US ADR if one exists (e.g. TSM for TSMC) — richer analyst coverage |
+| Private | Labelled estimates only | `"$6B estimated 2025 revenue (Sacra)"` — source named, never bare |
 
-   **HK-LISTED peers/competitors → stockanalysis.com ONLY.** (Yahoo's HK pages return 404 for financials/analysis.)
-   - Quote: https://stockanalysis.com/quote/hkg/{{code}}/
-   - Financials: https://stockanalysis.com/quote/hkg/{{code}}/financials/
-   - Forecast: https://stockanalysis.com/quote/hkg/{{code}}/forecast/ (FY+1 forward EPS only; mark FY+2 P/E as "NM")
+NM is the only legitimate substitute when the approved source doesn't have a data point. Mixed basket (US + HK peers): Yahoo for US, stockanalysis for HK, footnote the source split.
 
-   **KOREAN EXCHANGE (KOSPI / KOSDAQ) peers/competitors** (Samsung 005930, SK Hynix 000660, LG Energy 373220, etc.):
-   - PRIMARY: Yahoo Finance with `.KS` (KOSPI) or `.KQ` (KOSDAQ) suffix.
-     https://finance.yahoo.com/quote/005930.KS/key-statistics/
-     https://finance.yahoo.com/quote/005930.KS/financials/
-     https://finance.yahoo.com/quote/005930.KS/analysis/
-   - If Yahoo's /analysis page shows fewer than 3 analysts for FY+1/FY+2 consensus (KRX coverage is genuinely thinner than US), MarketScreener is the ONLY approved Tier-2 fallback for the missing FY+1/FY+2 revenue and EPS rows:
-     https://www.marketscreener.com/quote/stock/{{name-id}}/financials/
-     Cite it explicitly in Sources AND footnote the Peer Comp Table: "Korean peer consensus from MarketScreener; Yahoo coverage thin for KRX FY+2."
-   - Use Yahoo for snapshot/financials, MarketScreener ONLY for forwards when Yahoo is empty. Do not mix sources for the same field on the same row.
+Every peer row in the Peer Comp Table AND every named competitor row in the Competitive Landscape table MUST trace to ONE source line in Sources — the Yahoo / stockanalysis / labelled-estimate URL you actually fetched.
 
-   **TOKYO EXCHANGE (TYO) peers/competitors** (Sony 6758.T, Toyota 7203.T, etc.) → Yahoo Finance with `.T` suffix. Same three pages.
-
-   **TAIWAN EXCHANGE (TWSE) peers/competitors** (TSMC 2330.TW, MediaTek 2454.TW, etc.) → Yahoo Finance with `.TW` suffix. PREFER the US ADR ticker if one exists (TSM for TSMC) — ADR pages on Yahoo have richer analyst coverage and avoid the need for a TW-specific fetch.
-
-   **PRIVATE competitors** (Epic Games, Valve, etc.) → labelled estimates only, source named: "$6B estimated 2025 revenue (Sacra)", never bare. This is the ONLY allowed third-party source path for non-public companies.
-
-   **EXPLICIT BAN LIST — do NOT use these sources for ANY peer or competitor financial figure**, regardless of market:
-   TIKR, GuruFocus, Macrotrends, BusinessQuant, MarketBeat, Futurum, Forbes, SammyGuru, Astute Group, simplywall.st, Investing.com, Yahoo Finance video content, news articles (Reuters/Bloomberg/WSJ news pages do not count as data sources), aggregator blog posts, or your own triangulation from heterogeneous sources. The previous MU/MRVL runs each violated this by triangulating peer numbers from blog posts — every such citation is a rule violation.
-
-   **Hard fallback for missing data:** if Yahoo Finance (or stockanalysis.com for HK) doesn't have a specific peer's specific data point, the cell is "NM". Do NOT fall back to other aggregators for that figure. NM is the only acceptable substitute. The Peer Comp Table median rule (<3 valid values → "—") handles thin coverage gracefully.
-
-   **MIXED BASKET (US-listed + HK-listed peers):** Yahoo for US peers, stockanalysis.com for HK peers. Footnote the source split below the Peer Comp Table — labelled split, not silent mixing.
-
-   **Sourcing audit:** every peer row in the Peer Comp Table AND every competitor row in the Competitive Landscape table must trace to ONE source in the Sources section: the Yahoo Finance page for the ticker, the stockanalysis.com page for HK, or a labelled-estimate citation for private competitors. Do NOT cite TIKR / GuruFocus / news sites in support of any peer's financial figure.
-
-   **Why this rule is HARD:** prior runs had NVDA's single-quarter revenue mislabeled as TTM (60.5x EV/Rev vs real ~19.5x), AVGO showing as a peer-median outlier because AMD/QCOM figures came from heterogeneous sources, and AMD's P/E flagged as 140.6x with the model itself disclaiming the figure. All three were prevented by single-sourcing.
+BANNED — never use for ANY peer/competitor financial figure, regardless of market: TIKR, GuruFocus, Macrotrends, BusinessQuant, MarketBeat, Futurum, Forbes, SammyGuru, Astute Group, simplywall.st, Investing.com, Yahoo Finance video content, news articles, blog posts, or self-triangulation from heterogeneous sources. Every aggregator citation is a rule violation (three prior runs violated this).
 
 5. COMPETITOR USER/SCALE METRICS for the Competitive Landscape Assessment column (Appendix). Non-financial scale evidence — user count (DAU / MAU), product count, market share — for context, not for the comp table. ENTITY BINDING RULE: a number only belongs to a competitor if the sentence explicitly names that competitor as the subject. If the sentence is ambiguous, discard the number.
 
@@ -234,11 +212,10 @@ FISCAL BASIS RECONCILIATION:
 - For the subject, compute LTM and LFY revenue separately. If they differ by >15%, set a flag — show both and explain.
 
 SANITY-CHECK every computed figure:
-(a) EBITDA / Revenue <= Gross Margin (EBITDA can't exceed gross profit). If broken, recompute.
-(b) Margin ordering: Gross >= EBITDA >= Operating >= Net.
-(c) Annualization check: if you ever derive a forward by annualizing a single quarter, compare against Phase 1 consensus — if they diverge >20%, prefer the consensus.
-(d) Multiple reconciliation: forward EV/Rev must equal current EV / forward revenue. Print every multiple alongside its inputs.
-(e) LTM revenue cross-check vs filing-derived (LFY + current-FY stub - matching prior-FY stub). Tolerance ±2%. BASIS CONSISTENCY: prior-year stub MUST be the restated continuing-ops figure from the latest 10-Q, never the original-as-reported.
+(a) Margins must satisfy Gross ≥ EBITDA ≥ Operating ≥ Net; EBITDA cannot exceed gross profit. If broken, recompute.
+(b) Annualization: never derive a forward by annualizing a single quarter — if you do, compare against Phase 1 consensus; if diverged >20%, prefer consensus.
+(c) Multiple reconciliation: forward EV/Rev must equal current EV / forward revenue. Print every multiple alongside its inputs.
+(d) LTM cross-check vs filing-derived (LFY + current-FY stub - matching prior-FY stub). Tolerance ±2%. BASIS CONSISTENCY: prior-year stub MUST be the restated continuing-ops figure from the latest 10-Q, never the original-as-reported.
 
 PHASE 2 STOP RULE: After calling python_repl, you cannot call web_search, fetch_url, edgar_search, or edgar_fetch again. Fix bad inputs in the next python_repl call, not via more search. After at most 3 python_repl calls, proceed to Phase 3.
 
@@ -314,11 +291,6 @@ Format each debate as:
 3. Confirm trigger: name the SPECIFIC upcoming earnings disclosure or news event from Section 6 (Catalyst Calendar) that would confirm the case. Use the same metric threshold as the Catalyst Calendar row.
 4. Invalidate trigger: name the SPECIFIC disclosure that would invalidate the case. Symmetric with the confirm trigger.
 ```
-
-Worked example (for a hypothetical AI-semis name):
-
-> **Bull**
-> 75x FY+2E EPS of $6.17 = $463 / +65% from current. The 75x multiple anchors to the peer median 33x FY+1E P/E plus a justified premium reflecting the company's 42% 2-yr revenue CAGR vs peer median 28% [3]. This case requires (a) FY+2 custom silicon revenue exceeding $10B (the company's stated long-term target [2]), (b) operating margin expanding to the 38-40% target as opex grows in the mid-teens while revenue compounds 45% YoY [2], and (c) Broadcom failing to win a major hyperscaler away during the FY+2 contract-renegotiation window [4]. **Confirmed if** Q2 FY27 data center revenue exceeds $2.1B (the Section 6 bullish threshold) and FY28 guidance issued at the Q4 print is maintained at $16.5B+. **Invalidated if** Q2 FY27 data center revenue falls below $1.9B or a major customer publicly switches a custom program to a competitor.
 
 Hard rules:
 - Return math must be EXPLICIT and SHOWN. Not "could appreciate 30-50%" without the underlying computation.
@@ -1517,8 +1489,8 @@ def _parse_table_row(section: str, label: str) -> list[float | None]:
     for raw in cells:
         # Strip markdown decoration first
         cleaned = raw.replace("**", "").replace("*", "").replace(",", "").strip()
-        # Accounting-style negative: (1.23) at start of cell -> -1.23
-        m_neg = re.match(r"^\$?\(\s*(\d+(?:\.\d+)?)\s*\)", cleaned)
+        # Accounting-style negative: (1.23) or ($1.23) at start of cell -> -1.23
+        m_neg = re.match(r"^\$?\(\s*\$?(\d+(?:\.\d+)?)\s*\)", cleaned)
         if m_neg:
             try:
                 vals.append(-float(m_neg.group(1)))
