@@ -12,11 +12,18 @@ Page({
     status: 'pending',
     elapsed: 0,
     statusLabel: '排队中',
-    error: ''
+    error: '',
+    reportType: 'research',  // set from query param; affects expected wait time
+    waitHint: ''
   },
 
   onLoad(query) {
     this.jobId = query.jobId
+    const reportType = query.reportType || 'research'
+    const waitHint = reportType === 'initiate'
+      ? '投资简报通常需要 8-12 分钟,请保持本页打开。'
+      : '问题研究通常需要 2-3 分钟,请保持本页打开。'
+    this.setData({ reportType, waitHint })
     if (!this.jobId) {
       wx.showToast({ title: '缺少 job id', icon: 'none' })
       return
@@ -51,6 +58,7 @@ Page({
           clearInterval(this.timer)
           wx.setStorageSync('lastReport', {
             lang: d.lang,
+            report_type: d.report_type,
             md: d.md,
             html: d.html
           })

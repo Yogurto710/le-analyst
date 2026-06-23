@@ -14,14 +14,26 @@
 
   <view class="form">
     <view class="title">研究简报</view>
-    <view class="subtitle">输入股票代码和具体问题,系统将基于公开信息生成 2-3 分钟简报。</view>
+    <view class="subtitle">输入股票代码,选择报告类型,系统将基于公开信息生成简报。</view>
 
     <view class="label">股票代码</view>
     <input class="input" placeholder="例如 AVGO" maxlength="10"
            bindinput="onTicker" value="{{ticker}}" />
 
-    <view class="label">研究问题</view>
-    <textarea class="textarea"
+    <view class="label">报告类型</view>
+    <view class="lang-toggle">
+      <view class="opt {{reportType === 'initiate' ? 'on' : ''}}" data-type="initiate" bindtap="onReportType">投资简报</view>
+      <view class="opt {{reportType === 'research' ? 'on' : ''}}" data-type="research" bindtap="onReportType">问题研究</view>
+    </view>
+    <view class="hint hint-left">
+      {{reportType === 'initiate'
+        ? '深度初次覆盖(约1300字,8-12分钟)。基于公司公开披露,生成投资论点、市场观点、看多/看空/基准三情景、风险与催化剂。'
+        : '针对具体问题的研究(约500字,2-3分钟)。例如:为何最近股价波动、对最新财报怎么看。'}}
+    </view>
+
+    <view wx:if="{{reportType === 'research'}}" class="label">研究问题</view>
+    <textarea wx:if="{{reportType === 'research'}}"
+              class="textarea"
               placeholder="例如:为什么 AVGO 在 2026 年 6 月 4 日下跌 12.6%?"
               maxlength="500"
               bindinput="onQuestion"
@@ -32,14 +44,14 @@
       <view class="opt {{lang === 'zh' ? 'on' : ''}}" data-lang="zh" bindtap="onLang">中文</view>
       <view class="opt {{lang === 'en' ? 'on' : ''}}" data-lang="en" bindtap="onLang">English</view>
     </view>
-    <view class="hint hint-left" wx:if="{{langAuto}}">已根据问题语言自动选择,可点击切换</view>
+    <view class="hint hint-left" wx:if="{{langAuto && reportType === 'research'}}">已根据问题语言自动选择,可点击切换</view>
 
     <button class="primary" bindtap="submit" disabled="{{submitting}}">
       {{submitting ? '提交中…' : '提交'}}
     </button>
 
     <view wx:if="{{loginError}}" class="error">{{loginError}}</view>
-    <view class="hint">每日额度:{{quotaHint}}</view>
+    <view class="hint">{{quotaHint}}</view>
   </view>
 
   <view class="footer">公开信息工具,非投资建议</view>

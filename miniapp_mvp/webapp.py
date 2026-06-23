@@ -82,7 +82,12 @@ WX_APPID = os.environ.get("WX_APPID", "")
 WX_SECRET = os.environ.get("WX_SECRET", "")
 DAILY_QUOTA = int(os.environ.get("DAILY_QUOTA", "5"))
 DEV_MODE = os.environ.get("DEV_MODE") == "1"
-JOB_TIMEOUT_S = int(os.environ.get("JOB_TIMEOUT_S", "600"))  # 10 min hard cap
+JOB_TIMEOUT_S = int(os.environ.get("JOB_TIMEOUT_S", "900"))  # 15 min hard cap (initiate runs ~11-12 min worst case)
+
+# Per-job-type credit cost against DAILY_QUOTA. Initiate costs 3x research
+# because the underlying CLI call is ~4-5x the API spend (more tool calls,
+# longer Phase 3, and a Phase 4 review/revision pass).
+JOB_COSTS = {"research": 1, "initiate": 3}
 
 app = FastAPI(title="Le Analyst — mini-app backend (MVP)")
 
@@ -104,11 +109,17 @@ class WxLoginResp(BaseModel):
 
 class SubmitReq(BaseModel):
     ticker: str = Field(..., min_length=1, max_length=10)
-    question: str = Field(..., min_length=5, max_length=500)
+    # `question` is required for research, optional for initiate. Validation
+    # of the question/report_type contract happens in submit_job.
+    question: Optional[str] = Field(default=None, max_length=500)
     # Optional output language. If omitted, the backend auto-detects from
     # the question (CJK in question → zh, otherwise en). Mini-app submit
     # page sends this explicitly when the user uses the toggle.
     lang: Optional[str] = Field(default=None, pattern="^(en|zh)$")
+    # Report type — "initiate" (thesis-shaped ~1300-word brief, ticker-only)
+    # or "research" (question-driven ~500-word brief). Default initiate per
+    # mini-app UX (primary product is the deep brief).
+    report_type: str = Field(default="initiate", pattern="^(initiate|research)$")
 
 
 class SubmitResp(BaseModel):
@@ -119,6 +130,7 @@ class JobResp(BaseModel):
     status: str        # pending | running | done | failed
     elapsed_s: float
     lang: Optional[str] = None       # "en" or "zh" — echoes back what was used
+    report_type: Optional[str] = None  # "initiate" or "research"
     md: Optional[str] = None         # markdown source in the chosen language
     html: Optional[str] = None       # styled HTML for <rich-text> rendering
     error: Optional[str] = None
@@ -172,35 +184,62 @@ async def wx_login(req: WxLoginReq):
 
 @app.post("/jobs", response_model=SubmitResp)
 async def submit_job(req: SubmitReq, openid: str = Depends(current_openid)):
-    today_key = (openid, date.today().isoformat())
-    if _usage[today_key] >= DAILY_QUOTA:
-        raise HTTPException(429, f"daily quota of {DAILY_QUOTA} runs exceeded")
-
     ticker = req.ticker.strip().upper()
-    question = req.question.strip()
     if not ticker.isalnum():
         raise HTTPException(400, "ticker must be alphanumeric")
 
-    # Lang resolution: explicit req.lang wins; otherwise auto-detect from
-    # question (CJK → zh, else en). The mini-app submit page can send the
-    # explicit lang from its toggle; CLI-style callers can omit and let
-    # the heuristic apply.
-    lang = req.lang or ("zh" if _is_chinese_question(question) else "en")
+    report_type = req.report_type
+    question = (req.question or "").strip()
 
-    _usage[today_key] += 1
+    # Research requires a question; initiate ignores any question that was sent.
+    if report_type == "research" and (not question or len(question) < 5):
+        raise HTTPException(400, "research requires a question (min 5 chars)")
+
+    # Cost-based quota: initiate burns 3 credits, research 1.
+    cost = JOB_COSTS[report_type]
+    today_key = (openid, date.today().isoformat())
+    if _usage[today_key] + cost > DAILY_QUOTA:
+        used = _usage[today_key]
+        remaining = max(0, DAILY_QUOTA - used)
+        raise HTTPException(
+            429,
+            f"daily quota exhausted: this {report_type} request costs {cost} credit(s); "
+            f"{used}/{DAILY_QUOTA} used today, {remaining} remaining.",
+        )
+
+    # Lang resolution: explicit req.lang wins; otherwise auto-detect from
+    # question (CJK → zh, else en). For initiate without a question, default
+    # to en — the toggle on the submit page sends explicit lang anyway.
+    if req.lang:
+        lang = req.lang
+    elif question:
+        lang = "zh" if _is_chinese_question(question) else "en"
+    else:
+        lang = "en"
+
+    _usage[today_key] += cost
     job_id = secrets.token_urlsafe(12)
-    briefs_dir = _briefs_dir_for(lang)
+
+    # File output routing differs by report type:
+    #   - research → briefs_en/ or briefs_ch/
+    #   - initiate → reports/ (always; reports/ is single-folder for both langs)
+    if report_type == "research":
+        output_dir = _briefs_dir_for(lang)
+    else:
+        output_dir = ANALYST_DIR / "reports"
+
     _jobs[job_id] = {
         "openid": openid,
         "ticker": ticker,
         "question": question,
         "lang": lang,
+        "report_type": report_type,
         "status": "pending",
         "start": time.monotonic(),
-        "briefs_dir": briefs_dir,
+        "briefs_dir": output_dir,
         # Snapshot existing files so _run_job can identify the newly-written one
         "files_at_start": (
-            {p.name for p in briefs_dir.glob("*.md")} if briefs_dir.exists() else set()
+            {p.name for p in output_dir.glob("*.md")} if output_dir.exists() else set()
         ),
         "md": None,
         "html": None,
@@ -219,6 +258,7 @@ async def get_job(job_id: str, openid: str = Depends(current_openid)):
         status=job["status"],
         elapsed_s=round(time.monotonic() - job["start"], 1),
         lang=job.get("lang"),
+        report_type=job.get("report_type"),
         md=job["md"],
         html=job["html"],
         error=job["error"],
@@ -353,21 +393,29 @@ def _render_md_to_styled_html(md: str) -> str:
 # ---------- job execution ----------
 
 async def _run_job(job_id: str) -> None:
-    """Spawn `python analyst.py research TICKER "Q" --lang <en|zh>`, wait for
-    completion, locate the new brief file, read EN + zh into the job dict."""
+    """Spawn the appropriate analyst.py subcommand based on report_type:
+    `analyst.py research TICKER "Q" --lang ...` or
+    `analyst.py initiate TICKER --lang ...`. Wait for completion, locate
+    the newly-written .md file, read into the job dict."""
     job = _jobs[job_id]
     job["status"] = "running"
     try:
         job["briefs_dir"].mkdir(exist_ok=True)
-        # Explicit --lang means the model writes natively in the chosen
-        # language on the first pass (no translation step). The lang was
-        # resolved at submit time (explicit req.lang OR auto-detected
-        # from the question) and stored on the job.
-        args = [
-            sys.executable, str(ANALYST), "research",
-            job["ticker"], job["question"],
-            "--lang", job["lang"],
-        ]
+        # Build the subprocess command based on report_type.
+        # research: needs a question; initiate: ticker-only, longer run.
+        report_type = job.get("report_type", "research")
+        if report_type == "initiate":
+            args = [
+                sys.executable, str(ANALYST), "initiate",
+                job["ticker"],
+                "--lang", job["lang"],
+            ]
+        else:
+            args = [
+                sys.executable, str(ANALYST), "research",
+                job["ticker"], job["question"],
+                "--lang", job["lang"],
+            ]
         # Optional model override (kimi | deepseek). Set LE_ANALYST_MODEL in
         # .env or /etc/le-analyst/env to swap the default backend without
         # editing this file. analyst.py defaults to kimi when unset.

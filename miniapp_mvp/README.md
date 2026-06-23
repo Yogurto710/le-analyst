@@ -1,7 +1,9 @@
 # Le Analyst — WeChat Mini-App MVP
 
-The smallest cut that runs end-to-end: `analyst research` only, closed beta,
-no payment, in-memory state, single-file backend, three mini-app pages.
+The smallest cut that runs end-to-end: exposes both `analyst initiate`
+(投资简报, deep thesis-shaped brief) and `analyst research` (问题研究,
+question-driven brief). Closed beta, no payment, in-memory state,
+single-file backend, three mini-app pages.
 
 For the architectural target (queue + DB + object storage + WebSocket + ICP +
 public review + WeChat Pay) see `../WECHAT_MINIAPP_PLAN.md`. This directory
@@ -221,7 +223,7 @@ secrets stay in `.env`, mini-app source is unchanged.
 | Redis / Celery queue | `asyncio.create_task` handles 2-3 min jobs fine on one box | When concurrent submits ≥ ~5 |
 | WebSocket status push | 4s polling is fine for 2-3 min jobs | When you want sub-second status updates |
 | Full markdown rendering | `<text>` preserves newlines acceptably for Chinese prose | When testers ask for tables/headings styled |
-| WeChat Pay credits | Daily quota of 5/openid caps cost | When public launch warrants it |
+| WeChat Pay credits | Daily 5-credit quota/openid (initiate = 3 credits, research = 1) caps cost | When public launch warrants it |
 | `initiate` command | 10 min, 95 calls — needs queue + better UX than polling | Phase 2 of the broader plan |
 | Public mini-app review (finance category) | Experience build covers closed beta | When the product survives a beta and you have disclaimers reviewed |
 
