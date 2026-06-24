@@ -8,6 +8,9 @@ briefs_en/
 # reports_legacy/ which stays private.
 reports_legacy/
 token_log/
+# Planning / backlog docs are kept local — FEATURE_IDEAS.md and the
+# pre-build planning notes live under planning_docs/ since 2026-06-24.
+planning_docs/
 .claude/
 __pycache__/
 *.pyc
@@ -21,3 +24,8 @@ build/
 miniapp_mvp/miniapp/project.private.config.json
 # Per-developer mini-app backend URL (localhost / tunnel / VPS) — see local.config.example.js
 miniapp_mvp/miniapp/local.config.js
+# npm artifacts for the mini-app (lottie-miniprogram + future deps)
+# package.json/package-lock.json stay tracked so the dep set is pinned;
+# node_modules/ and the DevTools-compiled miniprogram_npm/ are per-machine.
+miniapp_mvp/miniapp/node_modules/
+miniapp_mvp/miniapp/miniprogram_npm/
