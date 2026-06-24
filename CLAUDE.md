@@ -152,9 +152,18 @@ reports_legacy/       # (gitignored) pre-rebuild initiation archive — 11-secti
 briefs_en/            # (gitignored) research output — English questions
 briefs_ch/            # tracked — Chinese research briefs (mobile-readable on GitHub)
 token_log/            # (gitignored) Kimi token usage spreadsheets
+planning_docs/        # (gitignored) FEATURE_IDEAS.md + pre-build planning notes (moved here 2026-06-24)
+miniapp_mvp/          # WeChat mini-app (closed beta) — FastAPI backend + WXML pages
 README.md             # user-facing
 LICENSE               # MIT
 ```
+
+## Mini-app status card UX (added 2026-06-24)
+
+The mini-app status page that users stare at during the 8–12 min initiate wait has two live layers:
+
+- **Robot mascot.** `miniapp/assets/lottie/robot-3d.js` is a Lottie animation (designer-supplied, JSON wrapped as a JS module so DevTools doesn't try to parse it as a page config). Rendered via `lottie-miniprogram` on a `<canvas type="2d">`. If the runtime isn't installed yet (no `miniprogram_npm/lottie-miniprogram/`), `status.js` falls back via try/catch to a CSS-spinning ⚙ gear so the page never goes blank. See [`miniapp_mvp/miniapp/libs/README.md`](miniapp_mvp/miniapp/libs/README.md) for install steps.
+- **Phase-aware live message.** `webapp.py:_classify_stderr_line` parses analyst.py's stderr markers (`[prefetch]`, `tool# N <tool_name>`, `[review] …`, `Saved:`) into a monotonic phase enum (`prefetch → gather → compute → synthesize → review → revise → save`). `_run_job` streams stdout + stderr concurrently via `asyncio.gather` (replaced the buffered `proc.communicate()`) so `job["phase"]` and `job["tool_count"]` update live; the mini-app polls every 4s and renders e.g. `正在检索资料 · 已调用 27 次工具`. Adding a new tool to the agent loop needs a matching `_PHASE_RANK` entry + regex update.
 
 ## Things explicitly NOT worth doing right now
 
@@ -163,7 +172,7 @@ These have been considered and shelved — don't suggest them unprompted:
 - **Multi-agent architecture**: discussed at length. The cache-invalidation cost on Kimi outweighs the parallelization wins for this workload. Targeted peer-comp parallelization is the only piece worth revisiting if it comes up.
 - **Switching to Seeking Alpha for trading stats**: paywalled, aggressive bot detection, no data advantage over Yahoo Finance which we're already fetching.
 - **Re-enabling Kimi thinking mode**: breaks the tool-calling round-trip. Don't attempt without solving the `reasoning_content` issue.
-- **Adding a dedicated multi-file architecture**: stay single-file until it actively hurts. As of 2026-06-17, the only exception is `legacy_prompts.py`, which holds the ~50KB pre-rebuild initiation prompt out of analyst.py so it doesn't pad git diffs or load CLAUDE.md context for active-product work. That's a one-time split for archived code, not a sign the single-file rule has relaxed.
+- **Adding a dedicated multi-file architecture**: stay single-file until it actively hurts. As of 2026-06-17, the only exception in `analyst.py`'s active code path is `legacy_prompts.py`, which holds the ~50KB pre-rebuild initiation prompt out of analyst.py so it doesn't pad git diffs or load CLAUDE.md context for active-product work. That's a one-time split for archived code, not a sign the single-file rule has relaxed. (The mini-app under `miniapp_mvp/` is a separate product surface — its own multi-file layout is fine.)
 
 ## When in doubt
 
