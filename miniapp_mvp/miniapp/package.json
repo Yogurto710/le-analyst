@@ -1,0 +1,9 @@
+{
+  "name": "le-analyst-miniapp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Le Analyst WeChat mini-app — npm deps consumed via DevTools 构建 npm.",
+  "dependencies": {
+    "lottie-miniprogram": "^1.0.12"
+  }
+}

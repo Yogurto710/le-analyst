@@ -1,7 +1,14 @@
 <view class="container">
   <view class="status-card">
+    <view wx:if="{{status === 'running' || status === 'pending'}}" class="mascot-wrap">
+      <canvas wx:if="{{lottieReady}}" type="2d" id="lottie-knight" class="mascot-canvas"></canvas>
+      <view wx:if="{{!lottieReady}}" class="mascot-fallback">⚙</view>
+    </view>
     <view class="status-label">{{statusLabel}}</view>
-    <view class="status-elapsed">已用时间:{{elapsed}} 秒</view>
+    <view wx:if="{{phaseMsg}}" class="phase-msg">{{phaseMsg}}</view>
+    <view class="status-elapsed">
+      已用 {{elapsed}} 秒<text wx:if="{{toolCount > 0}}"> · 已调用 {{toolCount}} 次工具</text>
+    </view>
     <view wx:if="{{status === 'running' || status === 'pending'}}" class="hint">
       {{waitHint}}
     </view>

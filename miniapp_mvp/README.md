@@ -196,6 +196,12 @@ Should return `{ok=True, analyst_exists=True, dev_mode=True, ...}`.
 Open DevTools → 编译. Simulator picks up the new `apiBase` automatically.
 Run a 提交 test to confirm the round-trip works.
 
+**First time on a new machine** — run `npm install` once and then
+**工具 → 构建 npm** in DevTools so the chess-knight Lottie animation on
+the status page renders via canvas. Without this step, the page falls
+back to a CSS-animated unicode ♞ which is fine for closed-beta but
+visually plainer. See `miniapp/libs/README.md` for full instructions.
+
 ### Phone testing (optional, when needed)
 
 For real-phone testing the tunnel URL must be in the request whitelist.

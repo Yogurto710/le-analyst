@@ -131,6 +131,13 @@ class JobResp(BaseModel):
     elapsed_s: float
     lang: Optional[str] = None       # "en" or "zh" — echoes back what was used
     report_type: Optional[str] = None  # "initiate" or "research"
+    # Phase substate while status="running". Parsed live from analyst.py
+    # stderr by _classify_stderr_line so the mini-app can show "正在检索
+    # 资料 (12次)" instead of a static "研究中" for an 8-12 minute run.
+    # null until the first tool call lands. Enum:
+    #   prefetch | gather | compute | synthesize | review | revise | save
+    phase: Optional[str] = None
+    tool_count: Optional[int] = None
     md: Optional[str] = None         # markdown source in the chosen language
     html: Optional[str] = None       # styled HTML for <rich-text> rendering
     error: Optional[str] = None
@@ -241,6 +248,9 @@ async def submit_job(req: SubmitReq, openid: str = Depends(current_openid)):
         "files_at_start": (
             {p.name for p in output_dir.glob("*.md")} if output_dir.exists() else set()
         ),
+        # Phase substate updated by _classify_stderr_line as analyst.py runs.
+        "phase": None,
+        "tool_count": 0,
         "md": None,
         "html": None,
         "error": None,
@@ -259,6 +269,8 @@ async def get_job(job_id: str, openid: str = Depends(current_openid)):
         elapsed_s=round(time.monotonic() - job["start"], 1),
         lang=job.get("lang"),
         report_type=job.get("report_type"),
+        phase=job.get("phase"),
+        tool_count=job.get("tool_count") or None,
         md=job["md"],
         html=job["html"],
         error=job["error"],
@@ -390,13 +402,111 @@ def _render_md_to_styled_html(md: str) -> str:
     return html
 
 
+# ---------- live phase classification ----------
+#
+# analyst.py emits a fairly stable set of stderr markers (`[prefetch]`,
+# `[T+...s] tool#NN <tool_name>`, `[review] ...`, `Saved: ...`) plus
+# Phase 3/4 brief content streamed to stdout. We tap both streams line-
+# by-line and project them onto a small phase state machine. The mini-app
+# polls `phase` + `tool_count` and renders a Chinese live message — what
+# the agent is doing right now, not just "研究中".
+
+# Phase ordering is monotonic: once we advance past gather, we never fall
+# back, even if a later stderr line matches an earlier pattern (the model
+# isn't supposed to call web_search after python_repl, but we don't want
+# UI flicker if it ever does).
+_PHASE_RANK = {
+    None: 0,
+    "prefetch":   1,
+    "gather":     2,
+    "compute":    3,
+    "synthesize": 4,
+    "review":     5,
+    "revise":     6,
+    "save":       7,
+}
+
+# Matches `tool# 12 fetch_url      took   3.4s` and the CAPPED variant.
+_TOOL_LINE_RE = re.compile(r"\btool#\s*(\d+)\s+(\w+)\s")
+_PREFETCH_RE  = re.compile(r"^\[prefetch\]")
+_REVIEW_RE    = re.compile(r"^\[review\]\s+(?:no issues|\d+ issue)")
+_REVISE_RE    = re.compile(r"^\[review\]\s+requesting targeted revision")
+_SAVE_RE      = re.compile(r"^Saved:")
+
+
+def _maybe_advance(job: dict, target: str) -> None:
+    """Move to `target` phase only if it's strictly ahead of the current
+    one. Keeps the UI monotonic even if the model emits markers out of
+    the documented order."""
+    if _PHASE_RANK[target] > _PHASE_RANK.get(job.get("phase")):
+        job["phase"] = target
+
+
+def _classify_stderr_line(line: str, job: dict) -> None:
+    """Project one analyst.py stderr line onto the phase state machine."""
+    if _PREFETCH_RE.search(line):
+        _maybe_advance(job, "prefetch")
+        return
+    m = _TOOL_LINE_RE.search(line)
+    if m:
+        n, tool = int(m.group(1)), m.group(2)
+        # tool_count tracks the highest seen index — the agentic loop
+        # numbers calls monotonically so this is also the running total.
+        if n > (job.get("tool_count") or 0):
+            job["tool_count"] = n
+        if tool == "python_repl":
+            _maybe_advance(job, "compute")
+        else:
+            _maybe_advance(job, "gather")
+        return
+    # `[review] requesting…` is more specific than `[review] <count> issue`,
+    # so test the revise pattern first.
+    if _REVISE_RE.search(line):
+        _maybe_advance(job, "revise")
+        return
+    if _REVIEW_RE.search(line):
+        _maybe_advance(job, "review")
+        return
+    if _SAVE_RE.search(line):
+        _maybe_advance(job, "save")
+
+
+async def _drain_stderr(stream: asyncio.StreamReader, buf: list, job: dict) -> None:
+    """Read stderr line-by-line until EOF; classify each line and keep
+    the raw text in `buf` for the failure-tail message."""
+    while True:
+        raw = await stream.readline()
+        if not raw:
+            return
+        line = raw.decode("utf-8", "replace")
+        buf.append(line)
+        _classify_stderr_line(line, job)
+
+
+async def _drain_stdout(stream: asyncio.StreamReader, buf: list, job: dict) -> None:
+    """Drain stdout in chunks (not lines — analyst.py streams Phase 3
+    content character-by-character, so newlines are sparse). Any non-
+    whitespace stdout means the model has begun writing the brief →
+    synthesize. We don't need the content here; analyst.py writes the
+    final file to disk and we read it from there."""
+    while True:
+        chunk = await stream.read(4096)
+        if not chunk:
+            return
+        buf.append(chunk)
+        if chunk.strip():
+            _maybe_advance(job, "synthesize")
+
+
 # ---------- job execution ----------
 
 async def _run_job(job_id: str) -> None:
     """Spawn the appropriate analyst.py subcommand based on report_type:
     `analyst.py research TICKER "Q" --lang ...` or
-    `analyst.py initiate TICKER --lang ...`. Wait for completion, locate
-    the newly-written .md file, read into the job dict."""
+    `analyst.py initiate TICKER --lang ...`. Stream stdout/stderr line-
+    by-line so the phase classifier can update job['phase'] live, wait
+    for completion, locate the newly-written .md file, read into the
+    job dict."""
     job = _jobs[job_id]
     job["status"] = "running"
     try:
@@ -427,9 +537,19 @@ async def _run_job(job_id: str) -> None:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        stdout_buf: list = []
+        stderr_buf: list = []
+        # Concurrently: drain stdout, drain stderr (classifying each line),
+        # and wait for the subprocess to exit. wait_for caps the whole
+        # gather so a hung process still trips JOB_TIMEOUT_S.
         try:
-            _, stderr = await asyncio.wait_for(
-                proc.communicate(), timeout=JOB_TIMEOUT_S
+            await asyncio.wait_for(
+                asyncio.gather(
+                    _drain_stdout(proc.stdout, stdout_buf, job),
+                    _drain_stderr(proc.stderr, stderr_buf, job),
+                    proc.wait(),
+                ),
+                timeout=JOB_TIMEOUT_S,
             )
         except asyncio.TimeoutError:
             proc.kill()
@@ -437,7 +557,7 @@ async def _run_job(job_id: str) -> None:
 
         if proc.returncode != 0:
             # analyst.py's own ABORTED-with-0-tool-calls message lands here
-            tail = (stderr or b"").decode("utf-8", "replace").strip()[-500:]
+            tail = "".join(stderr_buf).strip()[-500:]
             raise RuntimeError(f"analyst exited {proc.returncode}: {tail}")
 
         # Pick the brief file: starts with TICKER-, ends with .md, didn't
