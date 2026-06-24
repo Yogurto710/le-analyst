@@ -2193,9 +2193,40 @@ def _setup_clients(model_name: str = DEFAULT_MODEL) -> tuple[OpenAI, TavilyClien
 
 LANG_NAMES = {"en": "English", "zh": "Simplified Chinese (简体中文)"}
 
-_LANG_INSTRUCTION_ZH = """
+# Base Chinese instruction — language, preserve-verbatim rules, terminology,
+# and the universal Investment-Framework discipline (no 买入/卖出/价格目标).
+# Safe to append to ANY command's system prompt; carries no section-header
+# lockdown so the per-command template stays in charge of structure.
+_LANG_INSTRUCTION_ZH_BASE = """
 
 WRITE THIS REPORT ENTIRELY IN SIMPLIFIED CHINESE (简体中文). The reader is a Chinese-speaking investor analyzing US-listed equities.
+
+Preserve EXACTLY (do not translate, transliterate, or convert):
+- Numbers, dates, and units verbatim: $, %, x (as in 14.5x), B / M / bn / mn, basis points, ratios.
+- Currency: US dollars stay US dollars ($). NEVER restate as RMB / ¥.
+- Source URLs — byte-identical. Source titles may be in English; do not translate them. Publication names may be transliterated if a standard Chinese form is well established, otherwise keep English.
+- Ticker symbols in Latin letters (e.g. RBLX, MU, NTES).
+- Markdown structure: tables (same columns, same number of rows, same alignment), lists, section order — identical to what the English version would have.
+
+Terminology — use standard Chinese financial terms, consistently:
+- Keep these acronyms as-is (optionally add Chinese term in parentheses on first use only): EBITDA, FCF, DCF, EV, TAM, GAAP, SBC, CAGR, YoY, QoQ, LTM, TTM, DAU, MAU, ARPU, ROE, ROIC.
+- free cash flow → 自由现金流; enterprise value → 企业价值; bookings → 预订量（流水）; deferred revenue → 递延收入; gross margin → 毛利率; operating margin → 营业利润率; net cash → 净现金; dilution → 摊薄; guidance → 业绩指引; consensus → 市场一致预期; re-rating → 估值重估.
+- Company names: use the established Chinese name where one exists (e.g. NetEase → 网易, Micron → 美光, Marvell → 美满电子); otherwise keep the English name.
+
+Discipline (applies in Chinese exactly as in English):
+- Never write 买入 / 卖出 / 持有 (or any directional rating phrasing). Chinese makes these phrasings very natural — resist.
+- Never output a specific 价格目标 (price target). Express direction as percentage ranges and scenarios.
+"""
+
+
+# Initiate-only addendum — locks the H1 title to 投资简报 and the eight
+# H2 section headers to their canonical Chinese strings. Downstream
+# validators (C5, _find_section, _extract_open_questions) key on these
+# exact strings via _SECTION_NAMES_ZH, so they must stay in lock-step.
+# DO NOT append this to research or initiate_legacy — those commands
+# have their own section structure and would get overridden, producing
+# initiate-shaped output regardless of which command was actually run.
+_LANG_INSTRUCTION_ZH_INITIATE = """
 
 DOCUMENT TITLE (locked): the H1 title MUST follow this exact pattern:
 `# [Ticker]: [Chinese company name] ([English company name]) — 投资简报`
@@ -2228,32 +2259,23 @@ SECTION HEADERS (locked Chinese translations — use these EXACT strings):
 
 Stick to these exact translations every run. Downstream validators key on
 them.
-
-Preserve EXACTLY (do not translate, transliterate, or convert):
-- Numbers, dates, and units verbatim: $, %, x (as in 14.5x), B / M / bn / mn, basis points, ratios.
-- Currency: US dollars stay US dollars ($). NEVER restate as RMB / ¥.
-- Source URLs — byte-identical. Source titles may be in English; do not translate them. Publication names may be transliterated if a standard Chinese form is well established, otherwise keep English.
-- Ticker symbols in Latin letters (e.g. RBLX, MU, NTES).
-- Markdown structure: tables (same columns, same number of rows, same alignment), lists, section order — identical to what the English version would have.
-
-Terminology — use standard Chinese financial terms, consistently:
-- Keep these acronyms as-is (optionally add Chinese term in parentheses on first use only): EBITDA, FCF, DCF, EV, TAM, GAAP, SBC, CAGR, YoY, QoQ, LTM, TTM, DAU, MAU, ARPU, ROE, ROIC.
-- free cash flow → 自由现金流; enterprise value → 企业价值; bookings → 预订量（流水）; deferred revenue → 递延收入; gross margin → 毛利率; operating margin → 营业利润率; net cash → 净现金; dilution → 摊薄; guidance → 业绩指引; consensus → 市场一致预期; re-rating → 估值重估.
-- Company names: use the established Chinese name where one exists (e.g. NetEase → 网易, Micron → 美光, Marvell → 美满电子); otherwise keep the English name.
-
-The Investment Framework discipline applies in Chinese exactly as it does in English:
-- Never write 买入 / 卖出 / 持有 (or any directional rating phrasing). Chinese makes these phrasings very natural — resist.
-- Never output a specific 价格目标 (price target). Express direction as percentage ranges and scenarios, exactly as the English-mode prompt instructs above.
 """
 
 
-def _lang_instruction(lang: str) -> str:
+def _lang_instruction(lang: str, *, include_initiate_sections: bool = False) -> str:
     """Returns the additional system-prompt block for the requested output
     language. Empty for English (so the prompt cache stays warm on the
-    common case); a discipline-preserving block for Chinese."""
-    if lang == "zh":
-        return _LANG_INSTRUCTION_ZH
-    return ""
+    common case). For zh, the base block carries language + terminology +
+    discipline rules (safe to append anywhere); the initiate addendum locks
+    the title to 投资简报 and the H2 section headers, and MUST only be
+    appended for the new 8-section initiate command — appending it to
+    research or initiate_legacy makes the model produce initiate-shaped
+    output regardless of which command actually ran."""
+    if lang != "zh":
+        return ""
+    if include_initiate_sections:
+        return _LANG_INSTRUCTION_ZH_BASE + _LANG_INSTRUCTION_ZH_INITIATE
+    return _LANG_INSTRUCTION_ZH_BASE
 
 
 # ---------- Commands ----------
@@ -2348,7 +2370,7 @@ def initiate(
         raise typer.Exit(1)
     client, tavily, model_cfg = _setup_clients(model)
     today = datetime.date.today().strftime("%B %d, %Y")
-    system_prompt = INITIATE_SYSTEM_PROMPT_TEMPLATE.format(today=today) + _lang_instruction(lang)
+    system_prompt = INITIATE_SYSTEM_PROMPT_TEMPLATE.format(today=today) + _lang_instruction(lang, include_initiate_sections=True)
 
     messages: list[dict] = [
         {"role": "system", "content": system_prompt},
